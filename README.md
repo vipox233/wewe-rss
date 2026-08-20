@@ -21,6 +21,7 @@
 ### 高级功能
 
 - **标题过滤**：支持通过`/feeds/all.(json|rss|atom)`接口和`/feeds/:feed`对标题进行过滤
+
   ```
   {{ORIGIN_URL}}/feeds/all.atom?title_include=张三
   {{ORIGIN_URL}}/feeds/MP_WXS_123.json?limit=30&title_include=张三|李四|王五&title_exclude=张三丰|赵六
@@ -41,18 +42,20 @@
 
 ### Docker Compose 部署
 
-参考 [docker-compose.yml](https://github.com/cooderl/wewe-rss/blob/main/docker-compose.yml) 和 [docker-compose.sqlite.yml](https://github.com/cooderl/wewe-rss/blob/main/docker-compose.sqlite.yml)
+参考 [docker-compose.yml](./docker-compose.yml) 和 [docker-compose.sqlite.yml](./docker-compose.sqlite.yml)。两个示例都会从当前源码构建本地镜像。
 
 ### Docker 命令启动
 
 #### MySQL (推荐)
 
 1. 创建docker网络
+
    ```sh
    docker network create wewe-rss
    ```
 
 2. 启动 MySQL 数据库
+
    ```sh
    docker run -d \
      --name db \
@@ -64,15 +67,18 @@
      mysql:8.3.0 --mysql-native-password=ON
    ```
 
-3. 启动 Server
+3. 构建并启动 Server
    ```sh
+   docker build --target app -t wewe-rss:local .
    docker run -d \
      --name wewe-rss \
      -p 4000:4000 \
      -e DATABASE_URL='mysql://root:123456@db:3306/wewe-rss?schema=public&connect_timeout=30&pool_timeout=30&socket_timeout=30' \
      -e AUTH_CODE=123567 \
+     -e WEREAD_ACCOUNT_PROVIDER=local \
+     -e WEREAD_SESSION_SECRET='请替换为随机长字符串' \
      --network wewe-rss \
-     cooderl/wewe-rss:latest
+     wewe-rss:local
    ```
 
 [Nginx配置参考](https://raw.githubusercontent.com/cooderl/wewe-rss/main/assets/nginx.example.conf)
@@ -80,13 +86,16 @@
 #### SQLite (不推荐)
 
 ```sh
+docker build --target app-sqlite -t wewe-rss-sqlite:local .
 docker run -d \
   --name wewe-rss \
   -p 4000:4000 \
   -e DATABASE_TYPE=sqlite \
   -e AUTH_CODE=123567 \
+  -e WEREAD_ACCOUNT_PROVIDER=local \
+  -e WEREAD_SESSION_SECRET='请替换为随机长字符串' \
   -v $(pwd)/data:/app/data \
-  cooderl/wewe-rss-sqlite:latest
+  wewe-rss-sqlite:local
 ```
 
 ### 本地部署
@@ -113,20 +122,38 @@ pnpm run start:server
 
 ## ⚙️ 环境变量
 
-| 变量名                   | 说明                                                                    | 默认值                      |
-| ------------------------ | ----------------------------------------------------------------------- | --------------------------- |
-| `DATABASE_URL`           | **必填** 数据库地址，例如 `mysql://root:123456@127.0.0.1:3306/wewe-rss` | -                           |
-| `DATABASE_TYPE`          | 数据库类型，使用 SQLite 时需填写 `sqlite`                               | -                           |
-| `AUTH_CODE`              | 服务端接口请求授权码，空字符或不设置将不启用 (`/feeds`路径不需要)       | -                           |
-| `SERVER_ORIGIN_URL`      | 服务端访问地址，用于生成RSS完整路径                                     | -                           |
-| `MAX_REQUEST_PER_MINUTE` | 每分钟最大请求次数                                                      | 60                          |
-| `FEED_MODE`              | 输出模式，可选值 `fulltext` (会使接口响应变慢，占用更多内存)            | -                           |
-| `CRON_EXPRESSION`        | 定时更新订阅源Cron表达式                                                | `35 5,17 * * *`             |
-| `UPDATE_DELAY_TIME`      | 连续更新延迟时间，减少被关小黑屋                                        | `60s`                       |
-| `ENABLE_CLEAN_HTML`      | 是否开启正文html清理                                                    | `false`                     |
-| `PLATFORM_URL`           | 基础服务URL                                                             | `https://weread.111965.xyz` |
+| 变量名                        | 说明                                                                    | 默认值                      |
+| ----------------------------- | ----------------------------------------------------------------------- | --------------------------- |
+| `DATABASE_URL`                | **必填** 数据库地址，例如 `mysql://root:123456@127.0.0.1:3306/wewe-rss` | -                           |
+| `DATABASE_TYPE`               | 数据库类型，使用 SQLite 时需填写 `sqlite`                               | -                           |
+| `AUTH_CODE`                   | 服务端接口请求授权码，空字符或不设置将不启用 (`/feeds`路径不需要)       | -                           |
+| `SERVER_ORIGIN_URL`           | 服务端访问地址，用于生成RSS完整路径                                     | -                           |
+| `MAX_REQUEST_PER_MINUTE`      | 每分钟最大请求次数                                                      | 60                          |
+| `FEED_MODE`                   | 输出模式，可选值 `fulltext` (会使接口响应变慢，占用更多内存)            | -                           |
+| `CRON_EXPRESSION`             | 定时更新订阅源Cron表达式                                                | `35 5,17 * * *`             |
+| `UPDATE_DELAY_TIME`           | 连续更新延迟时间，减少被关小黑屋                                        | `60s`                       |
+| `ENABLE_CLEAN_HTML`           | 是否开启正文html清理                                                    | `false`                     |
+| `PLATFORM_URL`                | 基础服务URL                                                             | `https://weread.111965.xyz` |
+| `WEREAD_ACCOUNT_PROVIDER`     | 账号提供器：`remote`（原远程平台）或 `local`（本地扫码与续期）          | `remote`                    |
+| `WEREAD_SESSION_SECRET`       | 本地微信读书会话加密密钥；未设置时回退使用 `AUTH_CODE`                  | -                           |
+| `WEREAD_RENEW_INTERVAL_HOURS` | 本地微信读书会话主动续期间隔                                            | `6`                         |
+| `WEREAD_BASE_URL`             | 微信读书 Web 地址，一般无需修改                                         | `https://weread.qq.com`     |
 
 > **注意**: 国内DNS解析问题可使用 `https://weread.965111.xyz` 加速访问
+
+### 本地微信读书账号提供器
+
+本地提供器在当前 WeWe RSS 服务内完成扫码登录、Cookie 保存和自动续期，不再依赖远程平台保存微信读书登录态。它负责公众号文章列表；原远程提供器及公众号分享链接解析能力仍然保留。
+
+Docker Compose 示例已启用本地提供器，并从当前源码构建镜像：
+
+```bash
+printf 'WEREAD_SESSION_SECRET=%s\n' "$(openssl rand -hex 32)" > .env
+docker compose build app
+docker compose up -d
+```
+
+数据库迁移会在容器启动时自动执行。重新扫码后会新增一个 `local:<VID>` 账号，不会覆盖已有远程账号。服务每小时检查会话，在达到续期间隔、文章请求前发现会话过旧，或接口返回登录/票据错误时续期。若完整历史列表接口仍返回 `-2041`，会自动降级为获取最新文章，后续定时同步可持续增量入库。
 
 ## 🔔 钉钉通知
 
@@ -135,11 +162,10 @@ pnpm run start:server
 ## 📱 使用方式
 
 1. 进入账号管理，点击添加账号，微信扫码登录微信读书账号。
-  
-   **注意不要勾选24小时后自动退出**
-   
-   <img width="400" src="./assets/preview2.png"/>
 
+   **注意不要勾选24小时后自动退出**
+
+   <img width="400" src="./assets/preview2.png"/>
 
 2. 进入公众号源，点击添加，通过提交微信公众号分享链接，订阅微信公众号。
    **添加频率过高容易被封控，等24小时解封**
@@ -162,9 +188,10 @@ pnpm run start:server
    cp ./apps/web/.env.local.example ./apps/web/.env
    cp ./apps/server/.env.local.example ./apps/server/.env
    ```
-3. 执行 `pnpm install && pnpm run build:web && pnpm dev` 
-   
+3. 执行 `pnpm install && pnpm run build:web && pnpm dev`
+
    ⚠️ **注意：此命令仅用于本地开发，不要用于部署！**
+
 4. 前端访问 `http://localhost:5173`，后端访问 `http://localhost:4000`
 
 ## ⚠️ 风险声明

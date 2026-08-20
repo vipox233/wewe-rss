@@ -9,6 +9,15 @@ const configuration = () => {
 
   const authCode = process.env.AUTH_CODE;
   const platformUrl = process.env.PLATFORM_URL || 'https://weread.111965.xyz';
+  const accountProvider: 'local' | 'remote' =
+    process.env.WEREAD_ACCOUNT_PROVIDER === 'local' ? 'local' : 'remote';
+  const wereadBaseUrl = process.env.WEREAD_BASE_URL || 'https://weread.qq.com';
+  const renewIntervalHours = Math.max(
+    1,
+    parseInt(process.env.WEREAD_RENEW_INTERVAL_HOURS || '6', 10),
+  );
+  const sessionSecret =
+    process.env.WEREAD_SESSION_SECRET || process.env.AUTH_CODE || '';
   const originUrl = process.env.SERVER_ORIGIN_URL || '';
 
   const feedMode = process.env.FEED_MODE as 'fulltext' | '';
@@ -23,6 +32,12 @@ const configuration = () => {
     throttler: { maxRequestPerMinute },
     auth: { code: authCode },
     platform: { url: platformUrl },
+    weread: {
+      accountProvider,
+      baseUrl: wereadBaseUrl,
+      renewIntervalHours,
+      sessionSecret,
+    },
     feed: {
       originUrl,
       mode: feedMode,

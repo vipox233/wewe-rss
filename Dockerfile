@@ -2,7 +2,8 @@ FROM node:20.16.0-alpine AS base
 ENV PNPM_HOME="/pnpm"
 ENV PATH="$PNPM_HOME:$PATH"
 
-RUN npm i -g pnpm
+ARG PNPM_VERSION=8.15.9
+RUN npm i -g pnpm@${PNPM_VERSION}
 
 FROM base AS build
 COPY . /usr/src/app
@@ -36,6 +37,8 @@ ENV MAX_REQUEST_PER_MINUTE=60
 ENV AUTH_CODE=""
 ENV DATABASE_URL="file:../data/wewe-rss.db"
 ENV DATABASE_TYPE="sqlite"
+ENV WEREAD_ACCOUNT_PROVIDER="remote"
+ENV WEREAD_RENEW_INTERVAL_HOURS="6"
 
 RUN chmod +x ./docker-bootstrap.sh
 
@@ -55,6 +58,8 @@ ENV SERVER_ORIGIN_URL=""
 ENV MAX_REQUEST_PER_MINUTE=60
 ENV AUTH_CODE=""
 ENV DATABASE_URL=""
+ENV WEREAD_ACCOUNT_PROVIDER="remote"
+ENV WEREAD_RENEW_INTERVAL_HOURS="6"
 
 RUN chmod +x ./docker-bootstrap.sh
 
