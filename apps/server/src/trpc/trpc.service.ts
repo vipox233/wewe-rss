@@ -4,7 +4,12 @@ import { ConfigurationType } from '@server/configuration';
 import { defaultCount, statusMap } from '@server/constants';
 import { PrismaService } from '@server/prisma/prisma.service';
 import { TRPCError, initTRPC } from '@trpc/server';
-import Axios, { AxiosInstance } from 'axios';
+import { AccountProviderRegistry } from '@server/account-providers/account-provider.registry';
+import {
+  AccountProviderError,
+  AccountProviderType,
+  accountProviderTypes,
+} from '@server/account-providers/account-provider.types';
 import dayjs from 'dayjs';
 import timezone from 'dayjs/plugin/timezone';
 import utc from 'dayjs/plugin/utc';
@@ -30,7 +35,6 @@ export class TrpcService {
   });
   router = this.trpc.router;
   mergeRouters = this.trpc.mergeRouters;
-  request: AxiosInstance;
   updateDelayTime = 60;
 
   private readonly logger = new Logger(this.constructor.name);
@@ -38,58 +42,12 @@ export class TrpcService {
   constructor(
     private readonly prismaService: PrismaService,
     private readonly configService: ConfigService,
+    private readonly accountProviders: AccountProviderRegistry,
   ) {
-    const { url } =
-      this.configService.get<ConfigurationType['platform']>('platform')!;
     this.updateDelayTime =
       this.configService.get<ConfigurationType['feed']>(
         'feed',
       )!.updateDelayTime;
-
-    this.request = Axios.create({ baseURL: url, timeout: 15 * 1e3 });
-
-    this.request.interceptors.response.use(
-      (response) => {
-        return response;
-      },
-      async (error) => {
-        this.logger.log('error: ', error);
-        const errMsg = error.response?.data?.message || '';
-
-        const id = (error.config.headers as any).xid;
-        if (errMsg.includes('WeReadError401')) {
-          // 账号失效
-          await this.prismaService.account.update({
-            where: { id },
-            data: { status: statusMap.INVALID },
-          });
-          this.logger.error(`账号（${id}）登录失效，已禁用`);
-        } else if (errMsg.includes('WeReadError429')) {
-          //TODO 处理请求频繁
-          this.logger.error(`账号（${id}）请求频繁，打入小黑屋`);
-        }
-
-        const today = this.getTodayDate();
-
-        const blockedAccounts = blockedAccountsMap.get(today);
-
-        if (Array.isArray(blockedAccounts)) {
-          if (id) {
-            blockedAccounts.push(id);
-          }
-          blockedAccountsMap.set(today, blockedAccounts);
-        } else if (errMsg.includes('WeReadError400')) {
-          this.logger.error(`账号（${id}）处理请求参数出错`);
-          this.logger.error('WeReadError400: ', errMsg);
-          // 10s 后重试
-          await new Promise((resolve) => setTimeout(resolve, 10 * 1e3));
-        } else {
-          this.logger.error("Can't handle this error: ", errMsg);
-        }
-
-        return Promise.reject(error);
-      },
-    );
   }
 
   removeBlockedAccount = (vid: string) => {
@@ -113,11 +71,21 @@ export class TrpcService {
     return disabledAccounts.filter(Boolean);
   }
 
-  private async getAvailableAccount() {
+  private addBlockedAccount(id: string) {
+    const today = this.getTodayDate();
+    const accounts = blockedAccountsMap.get(today) || [];
+    if (!accounts.includes(id)) accounts.push(id);
+    blockedAccountsMap.set(today, accounts);
+  }
+
+  private async getAvailableAccount(
+    provider: AccountProviderType = this.accountProviders.defaultType,
+  ) {
     const disabledAccounts = this.getBlockedAccountIds();
     const account = await this.prismaService.account.findMany({
       where: {
         status: statusMap.ENABLE,
+        provider,
         NOT: {
           id: { in: disabledAccounts },
         },
@@ -126,7 +94,7 @@ export class TrpcService {
     });
 
     if (!account || account.length === 0) {
-      throw new Error('暂无可用读书账号!');
+      throw new Error(`暂无可用的 ${provider} 读书账号!`);
     }
 
     return account[Math.floor(Math.random() * account.length)];
@@ -134,34 +102,16 @@ export class TrpcService {
 
   async getMpArticles(mpId: string, page = 1, retryCount = 3) {
     const account = await this.getAvailableAccount();
+    const provider = this.accountProviders.get(account.provider);
 
     try {
-      const res = await this.request
-        .get<
-          {
-            id: string;
-            title: string;
-            picUrl: string;
-            publishTime: number;
-          }[]
-        >(`/api/v2/platform/mps/${mpId}/articles`, {
-          headers: {
-            xid: account.id,
-            Authorization: `Bearer ${account.token}`,
-          },
-          params: {
-            page,
-          },
-        })
-        .then((res) => res.data)
-        .then((res) => {
-          this.logger.log(
-            `getMpArticles(${mpId}) page: ${page} articles: ${res.length}`,
-          );
-          return res;
-        });
+      const res = await provider.getMpArticles(account, mpId, page);
+      this.logger.log(
+        `getMpArticles(${mpId}) provider: ${provider.type} page: ${page} articles: ${res.length}`,
+      );
       return res;
     } catch (err) {
+      await this.handleAccountProviderError(account.id, err);
       this.logger.error(`retry(${4 - retryCount}) getMpArticles  error: `, err);
       if (retryCount > 0) {
         return this.getMpArticles(mpId, page, retryCount - 1);
@@ -320,47 +270,48 @@ export class TrpcService {
 
   async getMpInfo(url: string) {
     url = url.trim();
-    const account = await this.getAvailableAccount();
-
-    return this.request
-      .post<
-        {
-          id: string;
-          cover: string;
-          name: string;
-          intro: string;
-          updateTime: number;
-        }[]
-      >(
-        `/api/v2/platform/wxs2mp`,
-        { url },
-        {
-          headers: {
-            xid: account.id,
-            Authorization: `Bearer ${account.token}`,
-          },
-        },
-      )
-      .then((res) => res.data);
+    const account = await this.getAvailableAccount(accountProviderTypes.REMOTE);
+    return this.accountProviders.getRemote().getMpInfo(account, url);
   }
 
   async createLoginUrl() {
-    return this.request
-      .get<{
-        uuid: string;
-        scanUrl: string;
-      }>(`/api/v2/login/platform`)
-      .then((res) => res.data);
+    return this.accountProviders.getDefault().createLoginUrl();
   }
 
-  async getLoginResult(id: string) {
-    return this.request
-      .get<{
-        message: string;
-        vid?: number;
-        token?: string;
-        username?: string;
-      }>(`/api/v2/login/platform/${id}`, { timeout: 120 * 1e3 })
-      .then((res) => res.data);
+  async getLoginResult(id: string, otp?: string) {
+    return this.accountProviders.getDefault().getLoginResult(id, otp);
+  }
+
+  async renewLocalAccount(id: string) {
+    const account = await this.prismaService.account.findUnique({
+      where: { id },
+      select: { provider: true },
+    });
+    if (!account || account.provider !== accountProviderTypes.LOCAL) {
+      throw new Error('只能手动续期本地微信读书账号');
+    }
+    await this.accountProviders.renewLocalAccount(id);
+    this.removeBlockedAccount(id);
+    return { success: true };
+  }
+
+  private async handleAccountProviderError(accountId: string, error: unknown) {
+    if (!(error instanceof AccountProviderError)) return;
+    if (error.kind === 'auth') {
+      await this.prismaService.account.update({
+        where: { id: accountId },
+        data: { status: statusMap.INVALID },
+      });
+      this.logger.error(`账号（${accountId}）续期及重试均失败，已标记失效`);
+      return;
+    }
+    if (error.kind === 'rate_limit') {
+      this.addBlockedAccount(accountId);
+      this.logger.error(`账号（${accountId}）请求频繁，已进入今日小黑屋`);
+      return;
+    }
+    if (error.kind === 'bad_request') {
+      await new Promise((resolve) => setTimeout(resolve, 10 * 1000));
+    }
   }
 }

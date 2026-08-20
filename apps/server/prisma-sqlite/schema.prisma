@@ -10,15 +10,30 @@ generator client {
 
 // 读书账号
 model Account {
-  id        String    @id
-  token     String    @map("token")
-  name      String    @map("name")
+  id        String          @id
+  token     String          @map("token")
+  name      String          @map("name")
+  provider  String          @default("remote") @map("provider")
   // 状态 0:失效 1:启用 2:禁用
-  status    Int       @default(1) @map("status")
-  createdAt DateTime  @default(now()) @map("created_at")
-  updatedAt DateTime? @default(now()) @updatedAt @map("updated_at")
+  status    Int             @default(1) @map("status")
+  createdAt DateTime        @default(now()) @map("created_at")
+  updatedAt DateTime?       @default(now()) @updatedAt @map("updated_at")
+  session   AccountSession?
 
   @@map("accounts")
+}
+
+model AccountSession {
+  accountId     String    @id @map("account_id")
+  data          String    @map("data")
+  lastRenewAt   DateTime? @map("last_renew_at")
+  nextRenewAt   DateTime? @map("next_renew_at")
+  lastErrorCode String?   @map("last_error_code")
+  createdAt     DateTime  @default(now()) @map("created_at")
+  updatedAt     DateTime? @default(now()) @updatedAt @map("updated_at")
+  account       Account   @relation(fields: [accountId], references: [id], onDelete: Cascade)
+
+  @@map("account_sessions")
 }
 
 // 订阅源

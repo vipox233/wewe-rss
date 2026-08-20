@@ -20,7 +20,10 @@ services:
       retries: 10
 
   app:
-    image: cooderl/wewe-rss:latest
+    build:
+      context: .
+      target: app
+    image: wewe-rss:local
     ports:
       - 4000:4000
     depends_on:
@@ -31,6 +34,12 @@ services:
       - DATABASE_URL=mysql://root:123456@db:3306/wewe-rss?schema=public&connect_timeout=30&pool_timeout=30&socket_timeout=30
       # 服务接口请求授权码
       - AUTH_CODE=123567
+      # 使用本地微信读书账号提供器；原远程提供器仍保留
+      - WEREAD_ACCOUNT_PROVIDER=local
+      # 建议在同目录 .env 中设置随机长字符串；未设置时回退使用 AUTH_CODE
+      - WEREAD_SESSION_SECRET=${WEREAD_SESSION_SECRET:-}
+      # 本地会话主动续期间隔（小时）
+      - WEREAD_RENEW_INTERVAL_HOURS=6
       # 提取全文内容模式
       # - FEED_MODE=fulltext
       # 定时更新订阅源Cron表达式

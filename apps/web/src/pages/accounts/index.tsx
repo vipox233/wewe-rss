@@ -13,6 +13,7 @@ import {
   TableHeader,
   TableRow,
   Chip,
+  Input,
 } from '@nextui-org/react';
 import { QRCodeSVG } from 'qrcode.react';
 import { toast } from 'sonner';
@@ -26,6 +27,8 @@ import { useEffect, useState } from 'react';
 const AccountPage = () => {
   const { isOpen, onOpen, onClose, onOpenChange } = useDisclosure();
   const [count, setCount] = useState(0);
+  const [otp, setOtp] = useState('');
+  const [submittedOtp, setSubmittedOtp] = useState<string>();
 
   const { refetch, data, isFetching } = trpc.account.list.useQuery({});
 
@@ -37,11 +40,15 @@ const AccountPage = () => {
 
   const { mutateAsync: addAccount } = trpc.account.add.useMutation({});
 
+  const { mutateAsync: renewAccount } = trpc.account.renew.useMutation({});
+
   const { mutateAsync, data: loginData } =
     trpc.platform.createLoginUrl.useMutation({
       onSuccess(data) {
         if (data.uuid) {
-          setCount(60);
+          setCount(data.expiresIn || 60);
+          setOtp('');
+          setSubmittedOtp(undefined);
         }
       },
     });
@@ -49,21 +56,49 @@ const AccountPage = () => {
   const { data: loginResult } = trpc.platform.getLoginResult.useQuery(
     {
       id: loginData?.uuid ?? '',
+      otp: submittedOtp,
     },
     {
       refetchIntervalInBackground: false,
-      enabled: !!loginData?.uuid,
+      refetchInterval(data) {
+        if (
+          loginData?.provider !== 'local' ||
+          data?.vid ||
+          data?.message ||
+          data?.needOtp
+        ) {
+          return false;
+        }
+        return 1500;
+      },
+      retry: false,
+      enabled: !!loginData?.uuid && isOpen,
       async onSuccess(data) {
-        if (data.vid && data.token) {
+        if (data.needOtp && submittedOtp) {
+          setSubmittedOtp(undefined);
+        }
+        if (data.vid && data.provider === 'local') {
           const name = data.username!;
-          await addAccount({ id: `${data.vid}`, name, token: data.token });
+          onClose();
+          toast.success('添加成功', {
+            description: `用户名：${name}(${data.vid})`,
+          });
+          refetch();
+        } else if (data.vid && data.token) {
+          const name = data.username!;
+          await addAccount({
+            id: `${data.vid}`,
+            name,
+            token: data.token,
+            provider: 'remote',
+          });
 
           onClose();
           toast.success('添加成功', {
             description: `用户名：${name}(${data.vid})`,
           });
           refetch();
-        } else if (data.message) {
+        } else if (data.message && !data.needOtp) {
           toast.error(`登录失败: ${data.message}`);
         }
       },
@@ -100,8 +135,9 @@ const AccountPage = () => {
         <TableHeader>
           <TableColumn>ID</TableColumn>
           <TableColumn>用户名</TableColumn>
+          <TableColumn>提供器</TableColumn>
           <TableColumn>状态</TableColumn>
-          <TableColumn>更新时间</TableColumn>
+          <TableColumn>最近续期</TableColumn>
           <TableColumn>操作</TableColumn>
         </TableHeader>
         <TableBody
@@ -116,6 +152,11 @@ const AccountPage = () => {
               <TableRow key={item.id}>
                 <TableCell>{item.id}</TableCell>
                 <TableCell>{item.name}</TableCell>
+                <TableCell>
+                  <Chip size="sm" variant="flat">
+                    {item.provider === 'local' ? '本地' : '远程'}
+                  </Chip>
+                </TableCell>
                 <TableCell>
                   {isBlocked ? (
                     <Chip className="capitalize" size="sm" variant="flat">
@@ -133,7 +174,9 @@ const AccountPage = () => {
                   )}
                 </TableCell>
                 <TableCell>
-                  {dayjs(item.updatedAt).format('YYYY-MM-DD')}
+                  {dayjs(item.session?.lastRenewAt || item.updatedAt).format(
+                    'YYYY-MM-DD HH:mm',
+                  )}
                 </TableCell>
                 <TableCell className="flex gap-2">
                   <StatusDropdown
@@ -148,6 +191,24 @@ const AccountPage = () => {
                       });
                     }}
                   ></StatusDropdown>
+
+                  {item.provider === 'local' && (
+                    <Button
+                      size="sm"
+                      onPress={() => {
+                        renewAccount(item.id)
+                          .then(() => {
+                            toast.success('续期成功!');
+                            refetch();
+                          })
+                          .catch((error) => {
+                            toast.error(`续期失败: ${error.message}`);
+                          });
+                      }}
+                    >
+                      续期
+                    </Button>
+                  )}
 
                   <Button
                     size="sm"
@@ -186,7 +247,7 @@ const AccountPage = () => {
                   {loginData ? (
                     <div>
                       <div className="relative">
-                        {loginResult?.message && (
+                        {loginResult?.message && !loginResult.needOtp && (
                           <div className="absolute top-0 left-0 bottom-0 right-0 bg-white bg-opacity-75 flex justify-center items-center">
                             <div className="text-xl">
                               {loginResult?.message}
@@ -201,6 +262,30 @@ const AccountPage = () => {
                           <span className="text-red-400">({count}s)</span>
                         )}
                       </div>
+                      {loginResult?.needOtp && (
+                        <div className="mt-4 flex flex-col gap-2">
+                          <div className="text-sm text-warning">
+                            {loginResult.message ||
+                              '请填写手机上显示的四位验证码'}
+                          </div>
+                          <Input
+                            value={otp}
+                            maxLength={4}
+                            inputMode="numeric"
+                            label="四位验证码"
+                            onValueChange={(value) =>
+                              setOtp(value.replace(/\D/g, '').slice(0, 4))
+                            }
+                          />
+                          <Button
+                            color="primary"
+                            isDisabled={!/^\d{4}$/.test(otp)}
+                            onPress={() => setSubmittedOtp(otp)}
+                          >
+                            验证
+                          </Button>
+                        </div>
+                      )}
                     </div>
                   ) : (
                     <div className="m-auto flex justify-center align-middle items-center">

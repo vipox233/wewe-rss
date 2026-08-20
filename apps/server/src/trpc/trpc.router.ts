@@ -7,6 +7,7 @@ import { PrismaService } from '@server/prisma/prisma.service';
 import { statusMap } from '@server/constants';
 import { ConfigService } from '@nestjs/config';
 import { ConfigurationType } from '@server/configuration';
+import { accountProviderTypes } from '@server/account-providers/account-provider.types';
 
 @Injectable()
 export class TrpcRouter {
@@ -37,9 +38,17 @@ export class TrpcRouter {
             id: true,
             name: true,
             status: true,
+            provider: true,
             createdAt: true,
             updatedAt: true,
             token: false,
+            session: {
+              select: {
+                lastRenewAt: true,
+                nextRenewAt: true,
+                lastErrorCode: true,
+              },
+            },
           },
           cursor: cursor
             ? {
@@ -86,6 +95,9 @@ export class TrpcRouter {
           id: z.string().min(1).max(32),
           token: z.string().min(1),
           name: z.string().min(1),
+          provider: z
+            .enum([accountProviderTypes.REMOTE, accountProviderTypes.LOCAL])
+            .default(accountProviderTypes.REMOTE),
           status: z.number().default(statusMap.ENABLE),
         }),
       )
@@ -129,6 +141,11 @@ export class TrpcRouter {
         this.trpcService.removeBlockedAccount(id);
 
         return id;
+      }),
+    renew: this.trpcService.protectedProcedure
+      .input(z.string())
+      .mutation(async ({ input: id }) => {
+        return this.trpcService.renewLocalAccount(id);
       }),
   });
 
@@ -410,10 +427,14 @@ export class TrpcRouter {
       .input(
         z.object({
           id: z.string(),
+          otp: z
+            .string()
+            .regex(/^\d{4}$/)
+            .optional(),
         }),
       )
       .query(async ({ input }) => {
-        return this.trpcService.getLoginResult(input.id);
+        return this.trpcService.getLoginResult(input.id, input.otp);
       }),
   });
 
