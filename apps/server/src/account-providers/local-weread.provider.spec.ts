@@ -118,4 +118,120 @@ describe('LocalWeReadProvider', () => {
       1,
     );
   });
+
+  it('lists only followed public accounts and normalizes shelf fields', async () => {
+    const account = { id: 'local:1', provider: 'local' } as Account;
+    const session = { cookies: { wr_skey: 'live' } };
+    jest.spyOn(provider as any, 'loadSession').mockResolvedValue(session);
+    jest.spyOn(provider as any, 'isRenewDue').mockReturnValue(false);
+    jest.spyOn((provider as any).request, 'get').mockResolvedValue({
+      status: 200,
+      data: {
+        books: [
+          {
+            bookId: 'normal-book',
+            title: '普通书籍',
+          },
+          {
+            bookId: 'MP_WXS_1',
+            title: '测试公众号',
+            cover: 'https://example.com/cover.jpg',
+            intro: '简介',
+            updateTime: 1_780_000_000_000,
+          },
+          {
+            bookId: 'MP_WXS_1',
+            title: '重复项',
+          },
+        ],
+      },
+      headers: {},
+    });
+
+    await expect(provider.listMps(account)).resolves.toEqual([
+      {
+        id: 'MP_WXS_1',
+        name: '测试公众号',
+        cover: 'https://example.com/cover.jpg',
+        intro: '简介',
+        updateTime: 1_780_000_000,
+      },
+    ]);
+  });
+
+  it('renews and retries when loading the followed public accounts fails auth', async () => {
+    const account = { id: 'local:1', provider: 'local' } as Account;
+    const session = { cookies: { wr_skey: 'expired', wr_rt: 'refresh' } };
+    const renewed = { cookies: { wr_skey: 'new', wr_rt: 'refresh' } };
+    jest.spyOn(provider as any, 'loadSession').mockResolvedValue(session);
+    jest.spyOn(provider as any, 'isRenewDue').mockReturnValue(false);
+    jest.spyOn(provider as any, 'renewSession').mockResolvedValue(renewed);
+    jest
+      .spyOn((provider as any).request, 'get')
+      .mockResolvedValueOnce({
+        status: 200,
+        data: { errCode: -2012, errMsg: '登录超时' },
+        headers: {},
+      })
+      .mockResolvedValueOnce({
+        status: 200,
+        data: { books: [{ bookId: 'MP_WXS_1', title: '测试公众号' }] },
+        headers: {},
+      });
+
+    await expect(provider.listMps(account)).resolves.toHaveLength(1);
+    expect((provider as any).renewSession).toHaveBeenCalledWith(
+      account.id,
+      session,
+      true,
+    );
+  });
+
+  it('matches a share link author against the local WeRead shelf', async () => {
+    const account = { id: 'local:1', provider: 'local' } as Account;
+    const item = {
+      id: 'MP_WXS_1',
+      name: '测试公众号',
+      cover: '',
+      intro: '',
+      updateTime: 0,
+    };
+    jest.spyOn(provider, 'listMps').mockResolvedValue([item]);
+    jest.spyOn((provider as any).publicRequest, 'get').mockResolvedValue({
+      status: 200,
+      data: '<meta property="og:article:author" content=" 测试 公众号 ">',
+      headers: {},
+    });
+
+    await expect(
+      provider.getMpInfo(account, 'https://mp.weixin.qq.com/s/article-id'),
+    ).resolves.toEqual([item]);
+  });
+
+  it('rejects share links outside the exact WeChat article host', async () => {
+    const account = { id: 'local:1', provider: 'local' } as Account;
+    const publicGet = jest.spyOn((provider as any).publicRequest, 'get');
+
+    await expect(
+      provider.getMpInfo(
+        account,
+        'https://mp.weixin.qq.com.attacker.example/s/article-id',
+      ),
+    ).rejects.toMatchObject({ kind: 'bad_request' });
+    expect(publicGet).not.toHaveBeenCalled();
+  });
+
+  it('explains that the public account must be followed in WeRead', async () => {
+    const account = { id: 'local:1', provider: 'local' } as Account;
+    jest.spyOn(provider, 'listMps').mockResolvedValue([]);
+    jest.spyOn((provider as any).publicRequest, 'get').mockResolvedValue({
+      status: 200,
+      data: '<meta property="og:article:author" content="未关注公众号">',
+      headers: {},
+    });
+
+    await expect(
+      provider.getMpInfo(account, 'https://mp.weixin.qq.com/s/article-id'),
+    ).rejects.toThrow('请先在微信读书 App 中关注');
+  });
 });

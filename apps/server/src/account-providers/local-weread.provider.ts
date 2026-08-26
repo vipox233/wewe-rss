@@ -6,12 +6,14 @@ import { ConfigurationType } from '@server/configuration';
 import { defaultCount, statusMap } from '@server/constants';
 import { PrismaService } from '@server/prisma/prisma.service';
 import Axios, { AxiosInstance, AxiosResponse } from 'axios';
+import { load } from 'cheerio';
 import {
   AccountProvider,
   AccountProviderError,
   LoginResult,
   LoginUrlResult,
   MpArticle,
+  MpInfo,
   accountProviderTypes,
 } from './account-provider.types';
 import {
@@ -32,6 +34,11 @@ type PendingLogin = {
   createdAt: number;
 };
 
+type CachedMpList = {
+  expiresAt: number;
+  items: MpInfo[];
+};
+
 const userAgent =
   'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 ' +
   '(KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36';
@@ -42,6 +49,7 @@ export class LocalWeReadProvider implements AccountProvider {
 
   private readonly logger = new Logger(this.constructor.name);
   private readonly request: AxiosInstance;
+  private readonly publicRequest: AxiosInstance;
   private readonly codec: SessionCodec;
   private readonly renewIntervalMs: number;
   private readonly pendingLogins = new Map<string, PendingLogin>();
@@ -49,6 +57,7 @@ export class LocalWeReadProvider implements AccountProvider {
     string,
     Promise<WeReadSessionState>
   >();
+  private readonly mpListCache = new Map<string, CachedMpList>();
 
   constructor(
     private readonly prismaService: PrismaService,
@@ -64,6 +73,18 @@ export class LocalWeReadProvider implements AccountProvider {
         'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
         'User-Agent': userAgent,
       },
+      validateStatus: () => true,
+    });
+    this.publicRequest = Axios.create({
+      timeout: 15 * 1000,
+      maxRedirects: 0,
+      maxContentLength: 4 * 1024 * 1024,
+      headers: {
+        Accept: 'text/html,application/xhtml+xml,*/*;q=0.8',
+        'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
+        'User-Agent': userAgent,
+      },
+      responseType: 'text',
       validateStatus: () => true,
     });
     this.renewIntervalMs = config.renewIntervalHours * 60 * 60 * 1000;
@@ -220,6 +241,73 @@ export class LocalWeReadProvider implements AccountProvider {
         throw retryProviderError;
       }
     }
+  }
+
+  async getMpInfo(account: Account, url: string): Promise<MpInfo[]> {
+    const shareUrl = this.validateShareUrl(url);
+    const response = await this.publicRequest.get<string>(shareUrl);
+    this.ensureHttpSuccess(response, '读取公众号文章信息');
+
+    const $ = load(String(response.data || ''));
+    const author = this.normalizeMpName(
+      $('meta[property="og:article:author"]').attr('content') ||
+        $('#js_name').first().text() ||
+        $('.rich_media_meta_nickname').first().text() ||
+        '',
+    );
+    if (!author) {
+      throw new AccountProviderError(
+        'bad_request',
+        '未能从分享链接识别公众号，请使用“从微信读书已关注列表导入”',
+      );
+    }
+
+    const matches = (await this.listMps(account)).filter(
+      (item) => this.normalizeMpName(item.name) === author,
+    );
+    if (matches.length === 1) return matches;
+    if (matches.length > 1) {
+      throw new AccountProviderError(
+        'bad_request',
+        `微信读书中有多个名为“${author}”的公众号，请从已关注列表中选择`,
+      );
+    }
+    throw new AccountProviderError(
+      'bad_request',
+      `微信读书书架中没有“${author}”。请先在微信读书 App 中关注该公众号，再重新加载已关注列表`,
+    );
+  }
+
+  async listMps(account: Account): Promise<MpInfo[]> {
+    const cached = this.mpListCache.get(account.id);
+    if (cached && cached.expiresAt > Date.now()) return cached.items;
+
+    let session = await this.loadSession(account.id);
+    if (this.isRenewDue(session)) {
+      try {
+        session = await this.renewSession(account.id, session);
+      } catch (error) {
+        this.logger.warn(
+          `账号 ${account.id} 读取书架前续期失败，将使用现有会话验证：${this.asProviderError(error).message}`,
+        );
+      }
+    }
+
+    let items: MpInfo[];
+    try {
+      items = await this.fetchMpList(account.id, session);
+    } catch (error) {
+      const providerError = this.asProviderError(error);
+      if (providerError.kind !== 'auth') throw providerError;
+      session = await this.renewSession(account.id, session, true);
+      items = await this.fetchMpList(account.id, session);
+    }
+
+    this.mpListCache.set(account.id, {
+      items,
+      expiresAt: Date.now() + 60 * 1000,
+    });
+    return items;
   }
 
   async renewAccount(accountId: string) {
@@ -437,6 +525,72 @@ export class LocalWeReadProvider implements AccountProvider {
     const body = this.unwrapData(response.data);
     const code = Number(body?.errCode ?? body?.errcode ?? 0);
     if (code !== 0) throw this.responseError(body, '微信读书会话验证失败');
+  }
+
+  private async fetchMpList(
+    accountId: string,
+    initialSession: WeReadSessionState,
+  ): Promise<MpInfo[]> {
+    const response = await this.request.get('/web/shelf/sync', {
+      params: { userVid: '', synckey: 0, lectureSynckey: 0 },
+      headers: this.authHeaders(initialSession),
+    });
+    this.ensureHttpSuccess(response, '获取微信读书已关注公众号');
+    const session = this.captureResponseAuth(initialSession, response);
+    const body = this.unwrapData(response.data);
+    const code = Number(body?.errCode ?? body?.errcode ?? 0);
+    if (code !== 0)
+      throw this.responseError(body, '获取微信读书已关注公众号失败');
+
+    const result = new Map<string, MpInfo>();
+    const books = Array.isArray(body?.books) ? body.books : [];
+    for (const book of books) {
+      const id = String(book?.bookId || '');
+      if (!id.startsWith('MP_WXS_') || result.has(id)) continue;
+      const rawUpdateTime = Number(book?.updateTime || 0);
+      result.set(id, {
+        id,
+        name: String(book?.title || book?.name || id).trim(),
+        cover: String(book?.cover || ''),
+        intro: String(book?.intro || book?.author || ''),
+        updateTime: Number.isFinite(rawUpdateTime)
+          ? Math.floor(
+              rawUpdateTime > 10_000_000_000
+                ? rawUpdateTime / 1000
+                : rawUpdateTime,
+            )
+          : 0,
+      });
+    }
+
+    if (JSON.stringify(session) !== JSON.stringify(initialSession)) {
+      await this.saveSession(accountId, session);
+    }
+    return [...result.values()];
+  }
+
+  private validateShareUrl(url: string) {
+    let parsed: URL;
+    try {
+      parsed = new URL(url.trim());
+    } catch {
+      throw new AccountProviderError('bad_request', '公众号分享链接格式不正确');
+    }
+    if (
+      parsed.protocol !== 'https:' ||
+      parsed.hostname !== 'mp.weixin.qq.com' ||
+      !parsed.pathname.startsWith('/s/')
+    ) {
+      throw new AccountProviderError(
+        'bad_request',
+        '只支持 https://mp.weixin.qq.com/s/ 开头的公众号文章链接',
+      );
+    }
+    return parsed.toString();
+  }
+
+  private normalizeMpName(name: string) {
+    return name.replace(/\s+/g, '').trim();
   }
 
   private async collectArticlePage(

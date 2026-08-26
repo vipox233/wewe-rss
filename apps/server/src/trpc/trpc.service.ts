@@ -270,8 +270,25 @@ export class TrpcService {
 
   async getMpInfo(url: string) {
     url = url.trim();
-    const account = await this.getAvailableAccount(accountProviderTypes.REMOTE);
-    return this.accountProviders.getRemote().getMpInfo(account, url);
+    const account = await this.getAvailableAccount();
+    return this.accountProviders.get(account.provider).getMpInfo(account, url);
+  }
+
+  async listMps() {
+    const account = await this.getAvailableAccount();
+    const provider = this.accountProviders.get(account.provider);
+    if (!provider.listMps) {
+      throw new Error('当前账号提供器不支持读取微信读书已关注列表');
+    }
+    return provider.listMps(account);
+  }
+
+  getAccountProviderInfo() {
+    const type = this.accountProviders.defaultType;
+    return {
+      type,
+      canListMps: type === accountProviderTypes.LOCAL,
+    };
   }
 
   async createLoginUrl() {

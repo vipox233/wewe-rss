@@ -15,6 +15,14 @@ export type MpArticle = {
   publishTime: number;
 };
 
+export type MpInfo = {
+  id: string;
+  name: string;
+  cover: string;
+  intro: string;
+  updateTime: number;
+};
+
 export type LoginUrlResult = {
   uuid: string;
   scanUrl: string;
@@ -33,7 +41,10 @@ export type LoginResult = {
 };
 
 export type AccountProviderErrorKind =
-  'auth' | 'rate_limit' | 'bad_request' | 'transient';
+  | 'auth'
+  | 'rate_limit'
+  | 'bad_request'
+  | 'transient';
 
 export class AccountProviderError extends Error {
   constructor(
@@ -53,6 +64,10 @@ export interface AccountProvider {
   createLoginUrl(): Promise<LoginUrlResult>;
 
   getLoginResult(id: string, otp?: string): Promise<LoginResult>;
+
+  getMpInfo(account: Account, url: string): Promise<MpInfo[]>;
+
+  listMps?(account: Account): Promise<MpInfo[]>;
 
   getMpArticles(
     account: Account,

@@ -379,6 +379,21 @@ export class TrpcRouter {
   });
 
   platformRouter = this.trpcService.router({
+    accountProviderInfo: this.trpcService.protectedProcedure.query(() => {
+      return this.trpcService.getAccountProviderInfo();
+    }),
+    listMps: this.trpcService.protectedProcedure.mutation(async () => {
+      try {
+        return await this.trpcService.listMps();
+      } catch (err: any) {
+        this.logger.log('listMps err: ', err);
+        throw new TRPCError({
+          code: 'INTERNAL_SERVER_ERROR',
+          message: err.response?.data?.message || err.message,
+          cause: err.stack,
+        });
+      }
+    }),
     getMpArticles: this.trpcService.protectedProcedure
       .input(
         z.object({

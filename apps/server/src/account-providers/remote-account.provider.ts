@@ -9,6 +9,7 @@ import {
   LoginResult,
   LoginUrlResult,
   MpArticle,
+  MpInfo,
   accountProviderTypes,
 } from './account-provider.types';
 
@@ -36,7 +37,7 @@ export class RemoteAccountProvider implements AccountProvider {
     }
   }
 
-  async getMpInfo(account: Account, url: string) {
+  async getMpInfo(account: Account, url: string): Promise<MpInfo[]> {
     try {
       return await this.request
         .post<

@@ -1,6 +1,7 @@
 import {
   Avatar,
   Button,
+  Checkbox,
   Divider,
   Listbox,
   ListboxItem,
@@ -25,6 +26,17 @@ import dayjs from 'dayjs';
 import { serverOriginUrl } from '@web/utils/env';
 import ArticleList from './list';
 
+type MpInfo = {
+  id: string;
+  name: string;
+  cover: string;
+  intro: string;
+  updateTime: number;
+};
+
+const getErrorMessage = (error: unknown) =>
+  error instanceof Error ? error.message : String(error);
+
 const Feeds = () => {
   const { id } = useParams();
 
@@ -42,6 +54,10 @@ const Feeds = () => {
 
   const { mutateAsync: getMpInfo, isLoading: isGetMpInfoLoading } =
     trpc.platform.getMpInfo.useMutation({});
+  const { data: accountProviderInfo } =
+    trpc.platform.accountProviderInfo.useQuery();
+  const { mutateAsync: listMps, isLoading: isListMpsLoading } =
+    trpc.platform.listMps.useMutation({});
   const { mutateAsync: updateMpInfo } = trpc.feed.edit.useMutation({});
 
   const { mutateAsync: addFeed, isLoading: isAddFeedLoading } =
@@ -68,38 +84,73 @@ const Feeds = () => {
     trpc.feed.delete.useMutation({});
 
   const [wxsLink, setWxsLink] = useState('');
+  const [availableMps, setAvailableMps] = useState<MpInfo[]>([]);
+  const [selectedMpIds, setSelectedMpIds] = useState<Set<string>>(new Set());
 
   const [currentMpId, setCurrentMpId] = useState(id || '');
 
-  const handleConfirm = async () => {
-    console.log('wxsLink', wxsLink);
-    // TODO show operation in progress
-    const wxsLinks = wxsLink.split('\n').filter((link) => link.trim() !== '');
-    for (const link of wxsLinks) {
-      console.log('add wxsLink', link);
-      const res = await getMpInfo({ wxsLink: link });
-      if (res[0]) {
-        const item = res[0];
-        await addFeed({
-          id: item.id,
-          mpName: item.name,
-          mpCover: item.cover,
-          mpIntro: item.intro,
-          updateTime: item.updateTime,
-          status: 1,
+  const addMp = async (item: MpInfo) => {
+    await addFeed({
+      id: item.id,
+      mpName: item.name,
+      mpCover: item.cover,
+      mpIntro: item.intro,
+      updateTime: item.updateTime,
+      status: 1,
+    });
+    await refreshMpArticles({ mpId: item.id });
+    toast.success('添加成功', {
+      description: `公众号 ${item.name}`,
+    });
+  };
+
+  const handleLoadMps = async () => {
+    try {
+      const items = await listMps();
+      setAvailableMps(items);
+      setSelectedMpIds(new Set());
+      if (items.length === 0) {
+        toast.error('没有找到公众号', {
+          description: '请先在微信读书 App 中关注公众号，然后再刷新',
         });
-        await refreshMpArticles({ mpId: item.id });
-        toast.success('添加成功', {
-          description: `公众号 ${item.name}`,
-        });
-        await queryUtils.article.list.reset();
-      } else {
-        toast.error('添加失败', { description: '请检查链接是否正确' });
       }
+    } catch (error: unknown) {
+      toast.error('读取已关注公众号失败', {
+        description: getErrorMessage(error),
+      });
     }
-    refetchFeedList();
-    setWxsLink('');
-    onClose();
+  };
+
+  const handleConfirm = async () => {
+    const wxsLinks = wxsLink.split('\n').filter((link) => link.trim() !== '');
+    const items = new Map<string, MpInfo>();
+    availableMps
+      .filter((item) => selectedMpIds.has(item.id))
+      .forEach((item) => items.set(item.id, item));
+
+    try {
+      for (const link of wxsLinks) {
+        const resolved = await getMpInfo({ wxsLink: link.trim() });
+        resolved.forEach((item) => items.set(item.id, item));
+      }
+      if (items.size === 0) {
+        toast.error('添加失败', { description: '请选择公众号或输入分享链接' });
+        return;
+      }
+      for (const item of items.values()) {
+        await addMp(item);
+      }
+      await queryUtils.article.list.reset();
+      await refetchFeedList();
+      setWxsLink('');
+      setAvailableMps([]);
+      setSelectedMpIds(new Set());
+      onClose();
+    } catch (error: unknown) {
+      toast.error('添加失败', {
+        description: getErrorMessage(error),
+      });
+    }
   };
 
   const isActive = (key: string) => {
@@ -400,6 +451,40 @@ const Feeds = () => {
                 添加公众号源
               </ModalHeader>
               <ModalBody>
+                {accountProviderInfo?.canListMps && (
+                  <>
+                    <Button
+                      variant="flat"
+                      color="primary"
+                      onPress={handleLoadMps}
+                      isLoading={isListMpsLoading}
+                    >
+                      从微信读书已关注列表导入
+                    </Button>
+                    {availableMps.length > 0 && (
+                      <div className="max-h-64 overflow-y-auto rounded-medium border border-default-200 p-2">
+                        {availableMps.map((item) => (
+                          <Checkbox
+                            key={item.id}
+                            className="flex max-w-full py-2"
+                            isSelected={selectedMpIds.has(item.id)}
+                            onValueChange={(selected) => {
+                              setSelectedMpIds((current) => {
+                                const next = new Set(current);
+                                if (selected) next.add(item.id);
+                                else next.delete(item.id);
+                                return next;
+                              });
+                            }}
+                          >
+                            {item.name}
+                          </Checkbox>
+                        ))}
+                      </div>
+                    )}
+                    <Divider />
+                  </>
+                )}
                 <Textarea
                   value={wxsLink}
                   onValueChange={setWxsLink}
@@ -416,12 +501,14 @@ const Feeds = () => {
                 <Button
                   color="primary"
                   isDisabled={
-                    !wxsLink.startsWith('https://mp.weixin.qq.com/s/')
+                    !wxsLink.startsWith('https://mp.weixin.qq.com/s/') &&
+                    selectedMpIds.size === 0
                   }
                   onPress={handleConfirm}
                   isLoading={
                     isAddFeedLoading ||
                     isGetMpInfoLoading ||
+                    isListMpsLoading ||
                     isGetArticlesLoading
                   }
                 >
