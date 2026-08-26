@@ -19,6 +19,11 @@ describe('TrpcService account provider routing', () => {
     account: {
       findMany: jest.fn().mockResolvedValue([account]),
     },
+    feedSchedule: {
+      findUnique: jest.fn(),
+      upsert: jest.fn(),
+      update: jest.fn(),
+    },
   };
   const config = {
     get: jest.fn().mockReturnValue({ updateDelayTime: 60 }),
@@ -33,12 +38,26 @@ describe('TrpcService account provider routing', () => {
   beforeEach(() => {
     jest.clearAllMocks();
     prisma.account.findMany.mockResolvedValue([account]);
+    prisma.feedSchedule.findUnique.mockResolvedValue(null);
+    prisma.feedSchedule.upsert.mockResolvedValue({
+      id: 1,
+      enabled: true,
+      intervalMinutes: 720,
+      lastRunAt: null,
+      lastSuccessAt: null,
+      nextRunAt: new Date(Date.now() + 720 * 60 * 1000),
+      lastError: null,
+    });
     registry.get.mockReturnValue(localProvider);
     service = new TrpcService(
       prisma as unknown as PrismaService,
       config as unknown as ConfigService,
       registry as unknown as AccountProviderRegistry,
     );
+  });
+
+  afterEach(() => {
+    service.onModuleDestroy();
   });
 
   it('resolves a share link with the configured local provider', async () => {
@@ -76,5 +95,52 @@ describe('TrpcService account provider routing', () => {
       type: accountProviderTypes.LOCAL,
       canListMps: true,
     });
+  });
+
+  it('creates a persistent 12-hour feed schedule by default', async () => {
+    await service.onModuleInit();
+
+    expect(prisma.feedSchedule.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        create: expect.objectContaining({
+          id: 1,
+          enabled: true,
+          intervalMinutes: 720,
+          nextRunAt: expect.any(Date),
+        }),
+      }),
+    );
+  });
+
+  it('updates the feed schedule and exposes its status', async () => {
+    const persisted = {
+      id: 1,
+      enabled: true,
+      intervalMinutes: 360,
+      lastRunAt: null,
+      lastSuccessAt: null,
+      nextRunAt: new Date(Date.now() + 360 * 60 * 1000),
+      lastError: null,
+    };
+    prisma.feedSchedule.upsert.mockResolvedValue(persisted);
+    prisma.feedSchedule.findUnique.mockResolvedValue(persisted);
+
+    await expect(service.updateFeedSchedule(true, 360)).resolves.toEqual({
+      ...persisted,
+      isRunning: false,
+    });
+    await expect(service.getFeedSchedule()).resolves.toEqual({
+      ...persisted,
+      isRunning: false,
+    });
+    expect(prisma.feedSchedule.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        update: expect.objectContaining({
+          enabled: true,
+          intervalMinutes: 360,
+          nextRunAt: expect.any(Date),
+        }),
+      }),
+    );
   });
 });

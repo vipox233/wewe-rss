@@ -55,7 +55,7 @@ describe('WeRead session helpers', () => {
                   createTime: 101,
                   mpInfo: {
                     title: '文章标题',
-                    originalId: 'original-token',
+                    originalId: 'Blu~n3lkMnH56xVQEdd7LQ',
                     pic_url: 'https://example.test/cover.jpg',
                   },
                 },
@@ -69,7 +69,7 @@ describe('WeRead session helpers', () => {
 
     expect(parsed.articles).toEqual([
       {
-        id: 'original-token',
+        id: 'Blu_n3lkMnH56xVQEdd7LQ',
         title: '文章标题',
         picUrl: 'https://example.test/cover.jpg',
         publishTime: 101,
@@ -93,5 +93,8 @@ describe('WeRead session helpers', () => {
       publishTime: 102,
     });
     expect(articleIdFromReviewId('MP_WXS_1_a_b', 'MP_WXS_1')).toBe('a_b');
+    expect(
+      articleIdFromReviewId('MP_WXS_1_Blu~n3lkMnH56xVQEdd7LQ', 'MP_WXS_1'),
+    ).toBe('Blu_n3lkMnH56xVQEdd7LQ');
   });
 });

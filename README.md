@@ -130,7 +130,6 @@ pnpm run start:server
 | `SERVER_ORIGIN_URL`           | 服务端访问地址，用于生成RSS完整路径                                     | -                           |
 | `MAX_REQUEST_PER_MINUTE`      | 每分钟最大请求次数                                                      | 60                          |
 | `FEED_MODE`                   | 输出模式，可选值 `fulltext` (会使接口响应变慢，占用更多内存)            | -                           |
-| `CRON_EXPRESSION`             | 定时更新订阅源Cron表达式                                                | `35 5,17 * * *`             |
 | `UPDATE_DELAY_TIME`           | 连续更新延迟时间，减少被关小黑屋                                        | `60s`                       |
 | `ENABLE_CLEAN_HTML`           | 是否开启正文html清理                                                    | `false`                     |
 | `PLATFORM_URL`                | 基础服务URL                                                             | `https://weread.111965.xyz` |
@@ -138,6 +137,8 @@ pnpm run start:server
 | `WEREAD_SESSION_SECRET`       | 本地微信读书会话加密密钥；未设置时回退使用 `AUTH_CODE`                  | -                           |
 | `WEREAD_RENEW_INTERVAL_HOURS` | 本地微信读书会话主动续期间隔                                            | `6`                         |
 | `WEREAD_BASE_URL`             | 微信读书 Web 地址，一般无需修改                                         | `https://weread.qq.com`     |
+
+公众号文章默认每 12 小时自动更新一次。可在订阅源“全部”页面查看上次、下次自动更新时间，并将间隔修改为 1～24 小时；设置保存在数据库中，容器重启后仍然生效。
 
 > **注意**: 国内DNS解析问题可使用 `https://weread.965111.xyz` 加速访问
 

@@ -1,5 +1,8 @@
 import { MpArticle } from './account-provider.types';
-import { articleIdFromReviewId } from './weread-session';
+import {
+  articleIdFromReviewId,
+  normalizeWeChatArticleId,
+} from './weread-session';
 
 export type ArticleListPayload = {
   errCode?: number | string;
@@ -34,7 +37,9 @@ export function parseMpArticleGroups(
       const review = subReview.review || {};
       const info = review.mpInfo || {};
       const reviewId = review.reviewId || subReview.reviewId || '';
-      const id = info.originalId || articleIdFromReviewId(reviewId, mpId) || '';
+      const id = normalizeWeChatArticleId(
+        info.originalId || articleIdFromReviewId(reviewId, mpId) || '',
+      );
       if (!id || !info.title) continue;
       articles.push({
         id,
@@ -60,8 +65,8 @@ export function parseMpArticleGroups(
 
 export function mapMpCoverArticle(body: any, mpId: string): MpArticle | null {
   const reviewId = String(body?.reviewId || '');
-  const id = String(
-    body?.originalId || articleIdFromReviewId(reviewId, mpId) || '',
+  const id = normalizeWeChatArticleId(
+    String(body?.originalId || articleIdFromReviewId(reviewId, mpId) || ''),
   );
   if (!id || !body?.title) return null;
   return {

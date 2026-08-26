@@ -150,6 +150,26 @@ export class TrpcRouter {
   });
 
   feedRouter = this.trpcService.router({
+    schedule: this.trpcService.protectedProcedure.query(() => {
+      return this.trpcService.getFeedSchedule();
+    }),
+    updateSchedule: this.trpcService.protectedProcedure
+      .input(
+        z.object({
+          enabled: z.boolean(),
+          intervalMinutes: z
+            .number()
+            .int()
+            .min(60)
+            .max(24 * 60),
+        }),
+      )
+      .mutation(({ input }) => {
+        return this.trpcService.updateFeedSchedule(
+          input.enabled,
+          input.intervalMinutes,
+        );
+      }),
     list: this.trpcService.protectedProcedure
       .input(
         z.object({

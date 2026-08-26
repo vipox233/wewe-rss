@@ -11,6 +11,8 @@ import {
   ModalContent,
   ModalFooter,
   ModalHeader,
+  Select,
+  SelectItem,
   Switch,
   Textarea,
   Tooltip,
@@ -19,7 +21,7 @@ import {
 } from '@nextui-org/react';
 import { PlusIcon } from '@web/components/PlusIcon';
 import { trpc } from '@web/utils/trpc';
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { toast } from 'sonner';
 import dayjs from 'dayjs';
@@ -37,10 +39,28 @@ type MpInfo = {
 const getErrorMessage = (error: unknown) =>
   error instanceof Error ? error.message : String(error);
 
+const scheduleIntervalOptions = [
+  { label: '每 1 小时', value: 60 },
+  { label: '每 2 小时', value: 120 },
+  { label: '每 4 小时', value: 240 },
+  { label: '每 6 小时', value: 360 },
+  { label: '每 12 小时', value: 720 },
+  { label: '每 24 小时', value: 1440 },
+];
+
+const formatScheduleTime = (value?: Date | string | null) =>
+  value ? dayjs(value).format('YYYY-MM-DD HH:mm:ss') : '尚未执行';
+
 const Feeds = () => {
   const { id } = useParams();
 
   const { isOpen, onOpen, onOpenChange, onClose } = useDisclosure();
+  const {
+    isOpen: isScheduleOpen,
+    onOpen: onScheduleOpen,
+    onOpenChange: onScheduleOpenChange,
+    onClose: onScheduleClose,
+  } = useDisclosure();
   const { refetch: refetchFeedList, data: feedData } = trpc.feed.list.useQuery(
     {},
     {
@@ -79,6 +99,13 @@ const Feeds = () => {
 
   const { data: isRefreshAllMpArticlesRunning } =
     trpc.feed.isRefreshAllMpArticlesRunning.useQuery();
+  const { data: feedSchedule, refetch: refetchFeedSchedule } =
+    trpc.feed.schedule.useQuery(undefined, {
+      refetchInterval: 30 * 1e3,
+      refetchOnWindowFocus: true,
+    });
+  const { mutateAsync: updateFeedSchedule, isLoading: isScheduleSaving } =
+    trpc.feed.updateSchedule.useMutation();
 
   const { mutateAsync: deleteFeed, isLoading: isDeleteFeedLoading } =
     trpc.feed.delete.useMutation({});
@@ -88,6 +115,30 @@ const Feeds = () => {
   const [selectedMpIds, setSelectedMpIds] = useState<Set<string>>(new Set());
 
   const [currentMpId, setCurrentMpId] = useState(id || '');
+  const [scheduleEnabled, setScheduleEnabled] = useState(true);
+  const [scheduleIntervalMinutes, setScheduleIntervalMinutes] = useState(720);
+
+  useEffect(() => {
+    if (!feedSchedule) return;
+    setScheduleEnabled(feedSchedule.enabled);
+    setScheduleIntervalMinutes(feedSchedule.intervalMinutes);
+  }, [feedSchedule]);
+
+  const handleSaveSchedule = async () => {
+    try {
+      await updateFeedSchedule({
+        enabled: scheduleEnabled,
+        intervalMinutes: scheduleIntervalMinutes,
+      });
+      await refetchFeedSchedule();
+      onScheduleClose();
+      toast.success('自动更新设置已保存');
+    } catch (error: unknown) {
+      toast.error('保存自动更新设置失败', {
+        description: getErrorMessage(error),
+      });
+    }
+  };
 
   const addMp = async (item: MpInfo) => {
     await addFeed({
@@ -254,10 +305,28 @@ const Feeds = () => {
           )}
         </div>
         <div className="flex-1 h-full flex flex-col">
-          <div className="p-4 pb-0 flex justify-between">
-            <h3 className="text-medium font-mono flex-1 overflow-hidden text-ellipsis break-keep text-nowrap pr-1">
-              {currentMpInfo?.mpName || '全部'}
-            </h3>
+          <div className="p-4 pb-0 flex justify-between gap-4">
+            <div className="flex-1 min-w-0">
+              <h3 className="text-medium font-mono overflow-hidden text-ellipsis break-keep text-nowrap pr-1">
+                {currentMpInfo?.mpName || '全部'}
+              </h3>
+              {!currentMpInfo && feedSchedule && (
+                <div className="mt-1 text-tiny font-light text-default-500">
+                  自动更新：
+                  {feedSchedule.enabled
+                    ? `每 ${feedSchedule.intervalMinutes / 60} 小时`
+                    : '已关闭'}
+                  {' · '}上次自动更新：
+                  {formatScheduleTime(feedSchedule.lastSuccessAt)}
+                  {feedSchedule.enabled && (
+                    <>
+                      {' · '}下次计划：
+                      {formatScheduleTime(feedSchedule.nextRunAt)}
+                    </>
+                  )}
+                </div>
+              )}
+            </div>
             {currentMpInfo ? (
               <div className="flex h-5 items-center space-x-4 text-small">
                 <div className="font-light">
@@ -398,6 +467,18 @@ const Feeds = () => {
               </div>
             ) : (
               <div className="flex gap-2">
+                <Link
+                  size="sm"
+                  href="#"
+                  onClick={(ev) => {
+                    ev.preventDefault();
+                    ev.stopPropagation();
+                    onScheduleOpen();
+                  }}
+                >
+                  自动更新设置
+                </Link>
+                <Divider orientation="vertical" />
                 <Tooltip
                   content="频繁调用可能会导致一段时间内不可用"
                   color="danger"
@@ -521,6 +602,62 @@ const Feeds = () => {
                   }
                 >
                   确定
+                </Button>
+              </ModalFooter>
+            </>
+          )}
+        </ModalContent>
+      </Modal>
+      <Modal isOpen={isScheduleOpen} onOpenChange={onScheduleOpenChange}>
+        <ModalContent>
+          {(onClose) => (
+            <>
+              <ModalHeader className="flex flex-col gap-1">
+                自动更新设置
+              </ModalHeader>
+              <ModalBody>
+                <Switch
+                  isSelected={scheduleEnabled}
+                  onValueChange={setScheduleEnabled}
+                >
+                  启用自动更新
+                </Switch>
+                <Select
+                  label="更新间隔"
+                  selectedKeys={[String(scheduleIntervalMinutes)]}
+                  onChange={(event) =>
+                    setScheduleIntervalMinutes(Number(event.target.value))
+                  }
+                  isDisabled={!scheduleEnabled}
+                >
+                  {scheduleIntervalOptions.map((option) => (
+                    <SelectItem key={String(option.value)} value={option.value}>
+                      {option.label}
+                    </SelectItem>
+                  ))}
+                </Select>
+                <div className="text-small text-default-500">
+                  上次自动更新：
+                  {formatScheduleTime(feedSchedule?.lastSuccessAt)}
+                  <br />
+                  下次计划：{formatScheduleTime(feedSchedule?.nextRunAt)}
+                  {feedSchedule?.lastError && (
+                    <div className="mt-2 text-danger">
+                      上次失败：{feedSchedule.lastError}
+                    </div>
+                  )}
+                </div>
+              </ModalBody>
+              <ModalFooter>
+                <Button variant="flat" onPress={onClose}>
+                  取消
+                </Button>
+                <Button
+                  color="primary"
+                  onPress={handleSaveSchedule}
+                  isLoading={isScheduleSaving}
+                >
+                  保存
                 </Button>
               </ModalFooter>
             </>

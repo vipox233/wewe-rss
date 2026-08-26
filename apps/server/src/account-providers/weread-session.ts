@@ -52,9 +52,17 @@ export function articleIdFromReviewId(
   bookId: string,
 ): string {
   const prefix = `${bookId}_`;
-  if (reviewId.startsWith(prefix)) return reviewId.slice(prefix.length);
+  if (reviewId.startsWith(prefix))
+    return normalizeWeChatArticleId(reviewId.slice(prefix.length));
   const separator = reviewId.lastIndexOf('_');
-  return separator >= 0 ? reviewId.slice(separator + 1) : reviewId;
+  return normalizeWeChatArticleId(
+    separator >= 0 ? reviewId.slice(separator + 1) : reviewId,
+  );
+}
+
+export function normalizeWeChatArticleId(articleId: string): string {
+  // 微信读书会在 reviewId 中使用 ~ 转义微信文章 originalId 里的 _。
+  return articleId.replace(/~/g, '_');
 }
 
 export class SessionCodec {

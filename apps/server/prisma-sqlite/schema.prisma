@@ -72,3 +72,17 @@ model Article {
 
   @@map("articles")
 }
+
+model FeedSchedule {
+  id              Int       @id @default(1)
+  enabled         Boolean   @default(true)
+  intervalMinutes Int       @default(720) @map("interval_minutes")
+  lastRunAt       DateTime? @map("last_run_at")
+  lastSuccessAt   DateTime? @map("last_success_at")
+  nextRunAt       DateTime? @map("next_run_at")
+  lastError       String?   @map("last_error")
+  createdAt       DateTime  @default(now()) @map("created_at")
+  updatedAt       DateTime? @default(now()) @updatedAt @map("updated_at")
+
+  @@map("feed_schedule")
+}

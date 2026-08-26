@@ -1,4 +1,9 @@
-import { Injectable, Logger } from '@nestjs/common';
+import {
+  Injectable,
+  Logger,
+  OnModuleDestroy,
+  OnModuleInit,
+} from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { ConfigurationType } from '@server/configuration';
 import { defaultCount, statusMap } from '@server/constants';
@@ -23,7 +28,7 @@ dayjs.extend(timezone);
 const blockedAccountsMap = new Map<string, string[]>();
 
 @Injectable()
-export class TrpcService {
+export class TrpcService implements OnModuleInit, OnModuleDestroy {
   trpc = initTRPC.create();
   publicProcedure = this.trpc.procedure;
   protectedProcedure = this.trpc.procedure.use(({ ctx, next }) => {
@@ -38,6 +43,9 @@ export class TrpcService {
   updateDelayTime = 60;
 
   private readonly logger = new Logger(this.constructor.name);
+  private readonly feedScheduleId = 1;
+  private readonly defaultFeedIntervalMinutes = 12 * 60;
+  private feedScheduleTimer?: ReturnType<typeof setTimeout>;
 
   constructor(
     private readonly prismaService: PrismaService,
@@ -48,6 +56,19 @@ export class TrpcService {
       this.configService.get<ConfigurationType['feed']>(
         'feed',
       )!.updateDelayTime;
+  }
+
+  async onModuleInit() {
+    try {
+      const schedule = await this.ensureFeedSchedule();
+      await this.armFeedSchedule(schedule);
+    } catch (error) {
+      this.logger.error('初始化公众号自动更新任务失败', error);
+    }
+  }
+
+  onModuleDestroy() {
+    if (this.feedScheduleTimer) clearTimeout(this.feedScheduleTimer);
   }
 
   removeBlockedAccount = (vid: string) => {
@@ -248,23 +269,150 @@ export class TrpcService {
 
   isRefreshAllMpArticlesRunning = false;
 
-  async refreshAllMpArticlesAndUpdateFeed() {
+  async refreshAllMpArticlesAndUpdateFeed(onlyEnabled = false) {
     if (this.isRefreshAllMpArticlesRunning) {
       this.logger.log('refreshAllMpArticlesAndUpdateFeed is running');
       return;
     }
-    const mps = await this.prismaService.feed.findMany();
+    const mps = await this.prismaService.feed.findMany({
+      where: onlyEnabled ? { status: statusMap.ENABLE } : undefined,
+    });
     this.isRefreshAllMpArticlesRunning = true;
+    const failures: string[] = [];
     try {
-      for (const { id } of mps) {
-        await this.refreshMpArticlesAndUpdateFeed(id);
+      for (const [index, { id }] of mps.entries()) {
+        try {
+          await this.refreshMpArticlesAndUpdateFeed(id);
+        } catch (error) {
+          const message =
+            error instanceof Error ? error.message : String(error);
+          failures.push(`${id}: ${message}`);
+          this.logger.error(`更新公众号（${id}）失败：${message}`);
+        }
 
-        await new Promise((resolve) =>
-          setTimeout(resolve, this.updateDelayTime * 1e3),
+        if (index < mps.length - 1) {
+          await new Promise((resolve) =>
+            setTimeout(resolve, this.updateDelayTime * 1e3),
+          );
+        }
+      }
+      if (failures.length > 0) {
+        throw new Error(
+          `${failures.length} 个公众号更新失败；${failures.slice(0, 3).join('；')}`,
         );
       }
     } finally {
       this.isRefreshAllMpArticlesRunning = false;
+    }
+  }
+
+  async getFeedSchedule() {
+    const schedule = await this.ensureFeedSchedule();
+    return {
+      ...schedule,
+      isRunning: this.isRefreshAllMpArticlesRunning,
+    };
+  }
+
+  async updateFeedSchedule(enabled: boolean, intervalMinutes: number) {
+    const nextRunAt = enabled
+      ? new Date(Date.now() + intervalMinutes * 60 * 1000)
+      : null;
+    const schedule = await this.prismaService.feedSchedule.upsert({
+      where: { id: this.feedScheduleId },
+      create: {
+        id: this.feedScheduleId,
+        enabled,
+        intervalMinutes,
+        nextRunAt,
+      },
+      update: { enabled, intervalMinutes, nextRunAt },
+    });
+    await this.armFeedSchedule(schedule);
+    return {
+      ...schedule,
+      isRunning: this.isRefreshAllMpArticlesRunning,
+    };
+  }
+
+  private async ensureFeedSchedule() {
+    const existing = await this.prismaService.feedSchedule.findUnique({
+      where: { id: this.feedScheduleId },
+    });
+    if (existing) return existing;
+
+    const nextRunAt = new Date(
+      Date.now() + this.defaultFeedIntervalMinutes * 60 * 1000,
+    );
+    return this.prismaService.feedSchedule.upsert({
+      where: { id: this.feedScheduleId },
+      create: {
+        id: this.feedScheduleId,
+        enabled: true,
+        intervalMinutes: this.defaultFeedIntervalMinutes,
+        nextRunAt,
+      },
+      update: {},
+    });
+  }
+
+  private async armFeedSchedule(schedule: {
+    enabled: boolean;
+    intervalMinutes: number;
+    nextRunAt: Date | null;
+  }) {
+    if (this.feedScheduleTimer) clearTimeout(this.feedScheduleTimer);
+    this.feedScheduleTimer = undefined;
+    if (!schedule.enabled) return;
+
+    let nextRunAt = schedule.nextRunAt;
+    if (!nextRunAt || nextRunAt.getTime() <= Date.now()) {
+      nextRunAt = new Date(Date.now() + 5 * 1000);
+      await this.prismaService.feedSchedule.update({
+        where: { id: this.feedScheduleId },
+        data: { nextRunAt },
+      });
+    }
+    const delay = Math.max(1000, nextRunAt.getTime() - Date.now());
+    this.feedScheduleTimer = setTimeout(() => {
+      void this.runScheduledFeedUpdate();
+    }, delay);
+    this.feedScheduleTimer.unref?.();
+  }
+
+  private async runScheduledFeedUpdate() {
+    const startedAt = new Date();
+    await this.prismaService.feedSchedule.update({
+      where: { id: this.feedScheduleId },
+      data: { lastRunAt: startedAt, nextRunAt: null, lastError: null },
+    });
+
+    try {
+      if (this.isRefreshAllMpArticlesRunning) {
+        throw new Error('已有公众号更新任务正在运行，本次自动更新已跳过');
+      }
+      await this.refreshAllMpArticlesAndUpdateFeed(true);
+      await this.prismaService.feedSchedule.update({
+        where: { id: this.feedScheduleId },
+        data: { lastSuccessAt: new Date(), lastError: null },
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      this.logger.error(`公众号自动更新失败：${message}`);
+      await this.prismaService.feedSchedule.update({
+        where: { id: this.feedScheduleId },
+        data: { lastError: message },
+      });
+    } finally {
+      const current = await this.ensureFeedSchedule();
+      const nextRunAt = current.enabled
+        ? new Date(Date.now() + current.intervalMinutes * 60 * 1000)
+        : null;
+      const schedule = await this.prismaService.feedSchedule.update({
+        where: { id: this.feedScheduleId },
+        data: { nextRunAt },
+      });
+      await this.armFeedSchedule(schedule);
     }
   }
 
