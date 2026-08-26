@@ -107,6 +107,7 @@ const Feeds = () => {
   const handleLoadMps = async () => {
     try {
       const items = await listMps();
+      setWxsLink('');
       setAvailableMps(items);
       setSelectedMpIds(new Set());
       if (items.length === 0) {
@@ -122,7 +123,10 @@ const Feeds = () => {
   };
 
   const handleConfirm = async () => {
-    const wxsLinks = wxsLink.split('\n').filter((link) => link.trim() !== '');
+    const wxsLinks =
+      selectedMpIds.size > 0
+        ? []
+        : wxsLink.split('\n').filter((link) => link.trim() !== '');
     const items = new Map<string, MpInfo>();
     availableMps
       .filter((item) => selectedMpIds.has(item.id))
@@ -469,6 +473,7 @@ const Feeds = () => {
                             className="flex max-w-full py-2"
                             isSelected={selectedMpIds.has(item.id)}
                             onValueChange={(selected) => {
+                              if (selected) setWxsLink('');
                               setSelectedMpIds((current) => {
                                 const next = new Set(current);
                                 if (selected) next.add(item.id);
@@ -487,9 +492,12 @@ const Feeds = () => {
                 )}
                 <Textarea
                   value={wxsLink}
-                  onValueChange={setWxsLink}
+                  onValueChange={(value) => {
+                    setWxsLink(value);
+                    if (value.trim()) setSelectedMpIds(new Set());
+                  }}
                   autoFocus
-                  label="分享链接"
+                  label="或使用分享链接"
                   placeholder="输入公众号文章分享链接，一行一条，如 https://mp.weixin.qq.com/s/xxxxxx https://mp.weixin.qq.com/s/xxxxxx"
                   variant="bordered"
                 />

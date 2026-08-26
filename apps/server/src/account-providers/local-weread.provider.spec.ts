@@ -208,6 +208,51 @@ describe('LocalWeReadProvider', () => {
     ).resolves.toEqual([item]);
   });
 
+  it('follows redirects that stay on the exact WeChat article host', async () => {
+    const account = { id: 'local:1', provider: 'local' } as Account;
+    const item = {
+      id: 'MP_WXS_1',
+      name: '测试公众号',
+      cover: '',
+      intro: '',
+      updateTime: 0,
+    };
+    jest.spyOn(provider, 'listMps').mockResolvedValue([item]);
+    const publicGet = jest
+      .spyOn((provider as any).publicRequest, 'get')
+      .mockResolvedValueOnce({
+        status: 302,
+        data: '',
+        headers: { location: '/s?__biz=test' },
+      })
+      .mockResolvedValueOnce({
+        status: 200,
+        data: '<meta property="og:article:author" content="测试公众号">',
+        headers: {},
+      });
+
+    await expect(
+      provider.getMpInfo(account, 'https://mp.weixin.qq.com/s/article-id'),
+    ).resolves.toEqual([item]);
+    expect(publicGet).toHaveBeenNthCalledWith(
+      2,
+      'https://mp.weixin.qq.com/s?__biz=test',
+    );
+  });
+
+  it('rejects redirects that leave the exact WeChat article host', async () => {
+    const account = { id: 'local:1', provider: 'local' } as Account;
+    jest.spyOn((provider as any).publicRequest, 'get').mockResolvedValue({
+      status: 302,
+      data: '',
+      headers: { location: 'https://example.com/redirected' },
+    });
+
+    await expect(
+      provider.getMpInfo(account, 'https://mp.weixin.qq.com/s/article-id'),
+    ).rejects.toMatchObject({ kind: 'bad_request' });
+  });
+
   it('rejects share links outside the exact WeChat article host', async () => {
     const account = { id: 'local:1', provider: 'local' } as Account;
     const publicGet = jest.spyOn((provider as any).publicRequest, 'get');

@@ -245,8 +245,7 @@ export class LocalWeReadProvider implements AccountProvider {
 
   async getMpInfo(account: Account, url: string): Promise<MpInfo[]> {
     const shareUrl = this.validateShareUrl(url);
-    const response = await this.publicRequest.get<string>(shareUrl);
-    this.ensureHttpSuccess(response, '读取公众号文章信息');
+    const response = await this.fetchWeChatArticlePage(shareUrl);
 
     const $ = load(String(response.data || ''));
     const author = this.normalizeMpName(
@@ -587,6 +586,59 @@ export class LocalWeReadProvider implements AccountProvider {
       );
     }
     return parsed.toString();
+  }
+
+  private async fetchWeChatArticlePage(url: string) {
+    let currentUrl = url;
+    for (let redirectCount = 0; redirectCount <= 3; redirectCount++) {
+      const response = await this.publicRequest.get<string>(currentUrl);
+      if (response.status < 300 || response.status >= 400) {
+        this.ensureHttpSuccess(response, '读取公众号文章信息');
+        return response;
+      }
+
+      const location = String(response.headers.location || '');
+      if (!location) {
+        throw new AccountProviderError(
+          'transient',
+          `读取公众号文章信息：HTTP ${response.status} 未返回跳转地址`,
+        );
+      }
+      if (redirectCount === 3) {
+        throw new AccountProviderError(
+          'transient',
+          '公众号文章跳转次数过多，请使用“从微信读书已关注列表导入”',
+        );
+      }
+
+      let nextUrl: URL;
+      try {
+        nextUrl = new URL(location, currentUrl);
+      } catch {
+        throw new AccountProviderError(
+          'bad_request',
+          '公众号文章返回了无效的跳转地址',
+        );
+      }
+      if (
+        nextUrl.protocol !== 'https:' ||
+        nextUrl.hostname !== 'mp.weixin.qq.com' ||
+        nextUrl.port ||
+        nextUrl.username ||
+        nextUrl.password
+      ) {
+        throw new AccountProviderError(
+          'bad_request',
+          '公众号文章跳转到了不受信任的地址，已停止访问',
+        );
+      }
+      this.logger.debug(
+        `公众号文章 HTTP ${response.status}，跟随微信域内跳转到 ${nextUrl.pathname}`,
+      );
+      currentUrl = nextUrl.toString();
+    }
+
+    throw new AccountProviderError('transient', '读取公众号文章信息失败');
   }
 
   private normalizeMpName(name: string) {
