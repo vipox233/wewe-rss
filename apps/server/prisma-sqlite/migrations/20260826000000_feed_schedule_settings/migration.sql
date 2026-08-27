@@ -1,15 +1,3 @@
-DELETE FROM "articles"
-WHERE instr("id", '~') > 0
-  AND EXISTS (
-    SELECT 1
-    FROM "articles" AS "corrected"
-    WHERE "corrected"."id" = replace("articles"."id", '~', '_')
-  );
-
-UPDATE "articles"
-SET "id" = replace("id", '~', '_')
-WHERE instr("id", '~') > 0;
-
 CREATE TABLE "feed_schedule" (
   "id" INTEGER NOT NULL PRIMARY KEY DEFAULT 1,
   "enabled" BOOLEAN NOT NULL DEFAULT true,

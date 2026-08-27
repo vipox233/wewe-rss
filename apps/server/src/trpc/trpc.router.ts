@@ -8,6 +8,7 @@ import { statusMap } from '@server/constants';
 import { ConfigService } from '@nestjs/config';
 import { ConfigurationType } from '@server/configuration';
 import { accountProviderTypes } from '@server/account-providers/account-provider.types';
+import { parseWeChatArticleShareUrl } from '@server/account-providers/weread-session';
 
 @Injectable()
 export class TrpcRouter {
@@ -438,7 +439,9 @@ export class TrpcRouter {
         z.object({
           wxsLink: z
             .string()
-            .refine((v) => v.startsWith('https://mp.weixin.qq.com/s/')),
+            .refine((value) => Boolean(parseWeChatArticleShareUrl(value)), {
+              message: '请输入有效的微信公众号文章链接',
+            }),
         }),
       )
       .mutation(async ({ input: { wxsLink: url } }) => {

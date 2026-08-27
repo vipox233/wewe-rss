@@ -11,6 +11,7 @@ import { load } from 'cheerio';
 import { minify } from 'html-minifier';
 import { LRUCache } from 'lru-cache';
 import pMap from '@cjs-exporter/p-map';
+import { normalizeWeChatArticleId } from '@server/account-providers/weread-session';
 
 const mpCache = new LRUCache<string, string>({
   max: 5000,
@@ -159,20 +160,21 @@ export class FeedsService {
 
     const showAuthor = feedInfo.id === 'all';
 
-    const mapper = async (item) => {
+    const mapper = async (item: Article) => {
       const { title, id, publishTime, picUrl, mpId } = item;
-      const link = `https://mp.weixin.qq.com/s/${id}`;
+      const articleId = normalizeWeChatArticleId(id);
+      const link = `https://mp.weixin.qq.com/s/${articleId}`;
 
       const mpName = feeds.find((item) => item.id === mpId)?.mpName || '-';
       const published = new Date(publishTime * 1e3);
 
       let content = '';
       if (enableFullText) {
-        content = await this.tryGetContent(id);
+        content = await this.tryGetContent(articleId);
       }
 
       feed.addItem({
-        id,
+        id: articleId,
         title,
         link: link,
         guid: link,
@@ -183,7 +185,18 @@ export class FeedsService {
       });
     };
 
-    await pMap(articles, mapper, { concurrency: 2, stopOnError: false });
+    const uniqueArticles = [
+      ...new Map(
+        articles.map((article) => [
+          normalizeWeChatArticleId(article.id),
+          article,
+        ]),
+      ).values(),
+    ];
+    await pMap(uniqueArticles, mapper, {
+      concurrency: 2,
+      stopOnError: false,
+    });
 
     return feed;
   }

@@ -2,6 +2,7 @@ import {
   SessionCodec,
   articleIdFromReviewId,
   mergeSetCookie,
+  parseWeChatArticleShareUrl,
   toCookieHeader,
 } from './weread-session';
 import { mapMpCoverArticle, parseMpArticleGroups } from './weread-articles';
@@ -96,5 +97,27 @@ describe('WeRead session helpers', () => {
     expect(
       articleIdFromReviewId('MP_WXS_1_Blu~n3lkMnH56xVQEdd7LQ', 'MP_WXS_1'),
     ).toBe('Blu_n3lkMnH56xVQEdd7LQ');
+  });
+
+  it('accepts both WeChat article URL forms and rejects unsafe variants', () => {
+    expect(
+      parseWeChatArticleShareUrl('https://mp.weixin.qq.com/s/article-id'),
+    ).not.toBeNull();
+    expect(
+      parseWeChatArticleShareUrl(
+        'https://mp.weixin.qq.com/s?__biz=MzXXX&mid=123&idx=1&sn=abc',
+      ),
+    ).not.toBeNull();
+    expect(
+      parseWeChatArticleShareUrl(
+        'https://mp.weixin.qq.com.attacker.example/s/article-id',
+      ),
+    ).toBeNull();
+    expect(
+      parseWeChatArticleShareUrl('https://user@mp.weixin.qq.com/s/article-id'),
+    ).toBeNull();
+    expect(
+      parseWeChatArticleShareUrl('https://mp.weixin.qq.com:444/s/article-id'),
+    ).toBeNull();
   });
 });

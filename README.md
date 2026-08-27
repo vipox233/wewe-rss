@@ -6,6 +6,7 @@
 更优雅的微信公众号订阅方式。
 
 ![主界面](https://raw.githubusercontent.com/cooderl/wewe-rss/main/assets/preview1.png)
+
 </div>
 
 ## ✨ 功能
@@ -139,6 +140,8 @@ pnpm run start:server
 | `WEREAD_BASE_URL`             | 微信读书 Web 地址，一般无需修改                                         | `https://weread.qq.com`     |
 
 公众号文章默认每 12 小时自动更新一次。可在订阅源“全部”页面查看上次、下次自动更新时间，并将间隔修改为 1～24 小时；设置保存在数据库中，容器重启后仍然生效。
+
+当前自动更新调度器只支持单个应用实例。请不要为同一数据库同时运行多个 WeWe RSS 应用副本，否则可能重复请求微信读书接口。
 
 > **注意**: 国内DNS解析问题可使用 `https://weread.965111.xyz` 加速访问
 

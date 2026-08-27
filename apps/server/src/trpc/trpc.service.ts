@@ -45,6 +45,7 @@ export class TrpcService implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(this.constructor.name);
   private readonly feedScheduleId = 1;
   private readonly defaultFeedIntervalMinutes = 12 * 60;
+  private readonly feedScheduleRecoveryDelayMs = 60 * 1000;
   private feedScheduleTimer?: ReturnType<typeof setTimeout>;
 
   constructor(
@@ -64,6 +65,7 @@ export class TrpcService implements OnModuleInit, OnModuleDestroy {
       await this.armFeedSchedule(schedule);
     } catch (error) {
       this.logger.error('初始化公众号自动更新任务失败', error);
+      this.armFeedScheduleRecovery();
     }
   }
 
@@ -382,12 +384,11 @@ export class TrpcService implements OnModuleInit, OnModuleDestroy {
 
   private async runScheduledFeedUpdate() {
     const startedAt = new Date();
-    await this.prismaService.feedSchedule.update({
-      where: { id: this.feedScheduleId },
-      data: { lastRunAt: startedAt, nextRunAt: null, lastError: null },
-    });
-
     try {
+      await this.prismaService.feedSchedule.update({
+        where: { id: this.feedScheduleId },
+        data: { lastRunAt: startedAt, nextRunAt: null, lastError: null },
+      });
       if (this.isRefreshAllMpArticlesRunning) {
         throw new Error('已有公众号更新任务正在运行，本次自动更新已跳过');
       }
@@ -399,11 +400,24 @@ export class TrpcService implements OnModuleInit, OnModuleDestroy {
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       this.logger.error(`公众号自动更新失败：${message}`);
-      await this.prismaService.feedSchedule.update({
-        where: { id: this.feedScheduleId },
-        data: { lastError: message },
-      });
+      try {
+        await this.prismaService.feedSchedule.update({
+          where: { id: this.feedScheduleId },
+          data: { lastError: message },
+        });
+      } catch (recordError) {
+        this.logger.error(
+          '记录公众号自动更新失败状态时数据库不可用',
+          recordError,
+        );
+      }
     } finally {
+      await this.rescheduleFeedUpdate();
+    }
+  }
+
+  private async rescheduleFeedUpdate() {
+    try {
       const current = await this.ensureFeedSchedule();
       const nextRunAt = current.enabled
         ? new Date(Date.now() + current.intervalMinutes * 60 * 1000)
@@ -413,6 +427,27 @@ export class TrpcService implements OnModuleInit, OnModuleDestroy {
         data: { nextRunAt },
       });
       await this.armFeedSchedule(schedule);
+    } catch (error) {
+      this.logger.error('重新安排公众号自动更新任务失败，将在稍后重试', error);
+      this.armFeedScheduleRecovery();
+    }
+  }
+
+  private armFeedScheduleRecovery() {
+    if (this.feedScheduleTimer) clearTimeout(this.feedScheduleTimer);
+    this.feedScheduleTimer = setTimeout(() => {
+      void this.recoverFeedSchedule();
+    }, this.feedScheduleRecoveryDelayMs);
+    this.feedScheduleTimer.unref?.();
+  }
+
+  private async recoverFeedSchedule() {
+    try {
+      const schedule = await this.ensureFeedSchedule();
+      await this.armFeedSchedule(schedule);
+    } catch (error) {
+      this.logger.error('恢复公众号自动更新任务失败，将继续重试', error);
+      this.armFeedScheduleRecovery();
     }
   }
 
@@ -428,7 +463,7 @@ export class TrpcService implements OnModuleInit, OnModuleDestroy {
     if (!provider.listMps) {
       throw new Error('当前账号提供器不支持读取微信读书已关注列表');
     }
-    return provider.listMps(account);
+    return provider.listMps(account, { forceRefresh: true });
   }
 
   getAccountProviderInfo() {

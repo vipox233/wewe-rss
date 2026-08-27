@@ -1,13 +1,3 @@
-DELETE wrong
-FROM `articles` AS wrong
-INNER JOIN `articles` AS corrected
-  ON corrected.`id` = REPLACE(wrong.`id`, '~', '_')
-WHERE wrong.`id` LIKE '%~%';
-
-UPDATE `articles`
-SET `id` = REPLACE(`id`, '~', '_')
-WHERE `id` LIKE '%~%';
-
 CREATE TABLE `feed_schedule` (
   `id` INTEGER NOT NULL DEFAULT 1,
   `enabled` BOOLEAN NOT NULL DEFAULT true,

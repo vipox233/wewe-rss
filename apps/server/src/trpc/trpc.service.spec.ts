@@ -48,6 +48,15 @@ describe('TrpcService account provider routing', () => {
       nextRunAt: new Date(Date.now() + 720 * 60 * 1000),
       lastError: null,
     });
+    prisma.feedSchedule.update.mockResolvedValue({
+      id: 1,
+      enabled: true,
+      intervalMinutes: 720,
+      lastRunAt: null,
+      lastSuccessAt: null,
+      nextRunAt: new Date(Date.now() + 720 * 60 * 1000),
+      lastError: null,
+    });
     registry.get.mockReturnValue(localProvider);
     service = new TrpcService(
       prisma as unknown as PrismaService,
@@ -87,7 +96,9 @@ describe('TrpcService account provider routing', () => {
 
     await expect(service.listMps()).resolves.toEqual([]);
     expect(registry.get).toHaveBeenCalledWith(accountProviderTypes.LOCAL);
-    expect(localProvider.listMps).toHaveBeenCalledWith(account);
+    expect(localProvider.listMps).toHaveBeenCalledWith(account, {
+      forceRefresh: true,
+    });
   });
 
   it('exposes local shelf-import capability to the web client', () => {
@@ -142,5 +153,45 @@ describe('TrpcService account provider routing', () => {
         }),
       }),
     );
+  });
+
+  it('re-arms the scheduler after the first status write fails', async () => {
+    const persisted = {
+      id: 1,
+      enabled: true,
+      intervalMinutes: 720,
+      lastRunAt: null,
+      lastSuccessAt: null,
+      nextRunAt: new Date(Date.now() + 720 * 60 * 1000),
+      lastError: null,
+    };
+    prisma.feedSchedule.update
+      .mockRejectedValueOnce(new Error('database temporarily unavailable'))
+      .mockResolvedValue(persisted);
+    prisma.feedSchedule.findUnique.mockResolvedValue(persisted);
+    const armSpy = jest
+      .spyOn(service as any, 'armFeedSchedule')
+      .mockResolvedValue(undefined);
+
+    await (service as any).runScheduledFeedUpdate();
+
+    expect(armSpy).toHaveBeenCalledWith(persisted);
+    expect(prisma.feedSchedule.update).toHaveBeenCalledWith(
+      expect.objectContaining({ data: { nextRunAt: expect.any(Date) } }),
+    );
+  });
+
+  it('starts a recovery timer when the database stays unavailable', async () => {
+    prisma.feedSchedule.update.mockRejectedValue(new Error('database down'));
+    prisma.feedSchedule.findUnique.mockRejectedValue(
+      new Error('database down'),
+    );
+    const recoverySpy = jest
+      .spyOn(service as any, 'armFeedScheduleRecovery')
+      .mockImplementation(() => undefined);
+
+    await (service as any).runScheduledFeedUpdate();
+
+    expect(recoverySpy).toHaveBeenCalledTimes(1);
   });
 });

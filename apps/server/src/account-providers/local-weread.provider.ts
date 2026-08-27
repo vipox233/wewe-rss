@@ -21,6 +21,7 @@ import {
   SessionCodec,
   WeReadSessionState,
   mergeSetCookie,
+  parseWeChatArticleShareUrl,
   toCookieHeader,
 } from './weread-session';
 import {
@@ -277,9 +278,14 @@ export class LocalWeReadProvider implements AccountProvider {
     );
   }
 
-  async listMps(account: Account): Promise<MpInfo[]> {
+  async listMps(
+    account: Account,
+    options: { forceRefresh?: boolean } = {},
+  ): Promise<MpInfo[]> {
     const cached = this.mpListCache.get(account.id);
-    if (cached && cached.expiresAt > Date.now()) return cached.items;
+    if (!options.forceRefresh && cached && cached.expiresAt > Date.now()) {
+      return cached.items;
+    }
 
     let session = await this.loadSession(account.id);
     if (this.isRenewDue(session)) {
@@ -569,20 +575,11 @@ export class LocalWeReadProvider implements AccountProvider {
   }
 
   private validateShareUrl(url: string) {
-    let parsed: URL;
-    try {
-      parsed = new URL(url.trim());
-    } catch {
-      throw new AccountProviderError('bad_request', '公众号分享链接格式不正确');
-    }
-    if (
-      parsed.protocol !== 'https:' ||
-      parsed.hostname !== 'mp.weixin.qq.com' ||
-      !parsed.pathname.startsWith('/s/')
-    ) {
+    const parsed = parseWeChatArticleShareUrl(url);
+    if (!parsed) {
       throw new AccountProviderError(
         'bad_request',
-        '只支持 https://mp.weixin.qq.com/s/ 开头的公众号文章链接',
+        '只支持 mp.weixin.qq.com 的 HTTPS 公众号文章链接',
       );
     }
     return parsed.toString();

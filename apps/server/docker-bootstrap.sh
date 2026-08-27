@@ -1,8 +1,8 @@
-
 #!/bin/sh
-# ENVIRONEMTN from docker-compose.yaml doesn't get through to subprocesses
-# Need to explicit pass DATABASE_URL here, otherwise migration doesn't work
+set -eu
+
+# Environment variables from docker-compose.yaml must be passed to subprocesses.
 # Run migrations
-DATABASE_URL=${DATABASE_URL} npx prisma migrate deploy
+DATABASE_URL="${DATABASE_URL}" npx prisma migrate deploy
 # start app
-DATABASE_URL=${DATABASE_URL} node dist/main
+exec env DATABASE_URL="${DATABASE_URL}" node dist/main

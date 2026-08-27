@@ -67,7 +67,10 @@ export interface AccountProvider {
 
   getMpInfo(account: Account, url: string): Promise<MpInfo[]>;
 
-  listMps?(account: Account): Promise<MpInfo[]>;
+  listMps?(
+    account: Account,
+    options?: { forceRefresh?: boolean },
+  ): Promise<MpInfo[]>;
 
   getMpArticles(
     account: Account,

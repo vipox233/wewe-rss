@@ -65,6 +65,26 @@ export function normalizeWeChatArticleId(articleId: string): string {
   return articleId.replace(/~/g, '_');
 }
 
+export function parseWeChatArticleShareUrl(value: string): URL | null {
+  let parsed: URL;
+  try {
+    parsed = new URL(value.trim());
+  } catch {
+    return null;
+  }
+  if (
+    parsed.protocol !== 'https:' ||
+    parsed.hostname !== 'mp.weixin.qq.com' ||
+    (parsed.pathname !== '/s' && !parsed.pathname.startsWith('/s/')) ||
+    parsed.port ||
+    parsed.username ||
+    parsed.password
+  ) {
+    return null;
+  }
+  return parsed;
+}
+
 export class SessionCodec {
   private readonly key?: Buffer;
 

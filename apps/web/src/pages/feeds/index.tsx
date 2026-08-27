@@ -317,6 +317,8 @@ const Feeds = () => {
                     ? `每 ${feedSchedule.intervalMinutes / 60} 小时`
                     : '已关闭'}
                   {' · '}上次自动更新：
+                  {formatScheduleTime(feedSchedule.lastRunAt)}
+                  {' · '}上次成功：
                   {formatScheduleTime(feedSchedule.lastSuccessAt)}
                   {feedSchedule.enabled && (
                     <>
@@ -590,7 +592,7 @@ const Feeds = () => {
                 <Button
                   color="primary"
                   isDisabled={
-                    !wxsLink.startsWith('https://mp.weixin.qq.com/s/') &&
+                    !wxsLink.trim().startsWith('https://mp.weixin.qq.com/s') &&
                     selectedMpIds.size === 0
                   }
                   onPress={handleConfirm}
@@ -638,6 +640,9 @@ const Feeds = () => {
                 </Select>
                 <div className="text-small text-default-500">
                   上次自动更新：
+                  {formatScheduleTime(feedSchedule?.lastRunAt)}
+                  <br />
+                  上次成功：
                   {formatScheduleTime(feedSchedule?.lastSuccessAt)}
                   <br />
                   下次计划：{formatScheduleTime(feedSchedule?.nextRunAt)}

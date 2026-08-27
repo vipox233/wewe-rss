@@ -159,6 +159,31 @@ describe('LocalWeReadProvider', () => {
     ]);
   });
 
+  it('bypasses the public-account cache for an explicit refresh', async () => {
+    const account = { id: 'local:1', provider: 'local' } as Account;
+    const session = { cookies: { wr_skey: 'live' } };
+    const first = {
+      id: 'MP_WXS_1',
+      name: '旧列表',
+      cover: '',
+      intro: '',
+      updateTime: 0,
+    };
+    const refreshed = { ...first, id: 'MP_WXS_2', name: '新关注公众号' };
+    jest.spyOn(provider as any, 'loadSession').mockResolvedValue(session);
+    jest.spyOn(provider as any, 'isRenewDue').mockReturnValue(false);
+    const fetchMpList = jest
+      .spyOn(provider as any, 'fetchMpList')
+      .mockResolvedValueOnce([first])
+      .mockResolvedValueOnce([refreshed]);
+
+    await expect(provider.listMps(account)).resolves.toEqual([first]);
+    await expect(
+      provider.listMps(account, { forceRefresh: true }),
+    ).resolves.toEqual([refreshed]);
+    expect(fetchMpList).toHaveBeenCalledTimes(2);
+  });
+
   it('renews and retries when loading the followed public accounts fails auth', async () => {
     const account = { id: 'local:1', provider: 'local' } as Account;
     const session = { cookies: { wr_skey: 'expired', wr_rt: 'refresh' } };
@@ -206,6 +231,29 @@ describe('LocalWeReadProvider', () => {
     await expect(
       provider.getMpInfo(account, 'https://mp.weixin.qq.com/s/article-id'),
     ).resolves.toEqual([item]);
+  });
+
+  it('accepts a direct WeChat article URL with query parameters', async () => {
+    const account = { id: 'local:1', provider: 'local' } as Account;
+    const item = {
+      id: 'MP_WXS_1',
+      name: '测试公众号',
+      cover: '',
+      intro: '',
+      updateTime: 0,
+    };
+    jest.spyOn(provider, 'listMps').mockResolvedValue([item]);
+    const publicGet = jest
+      .spyOn((provider as any).publicRequest, 'get')
+      .mockResolvedValue({
+        status: 200,
+        data: '<meta property="og:article:author" content="测试公众号">',
+        headers: {},
+      });
+    const url = 'https://mp.weixin.qq.com/s?__biz=MzXXX&mid=123&idx=1&sn=abc';
+
+    await expect(provider.getMpInfo(account, url)).resolves.toEqual([item]);
+    expect(publicGet).toHaveBeenCalledWith(url);
   });
 
   it('follows redirects that stay on the exact WeChat article host', async () => {
@@ -265,6 +313,22 @@ describe('LocalWeReadProvider', () => {
     ).rejects.toMatchObject({ kind: 'bad_request' });
     expect(publicGet).not.toHaveBeenCalled();
   });
+
+  it.each([
+    'https://user@mp.weixin.qq.com/s/article-id',
+    'https://mp.weixin.qq.com:444/s/article-id',
+  ])(
+    'rejects share links with credentials or a custom port: %s',
+    async (url) => {
+      const account = { id: 'local:1', provider: 'local' } as Account;
+      const publicGet = jest.spyOn((provider as any).publicRequest, 'get');
+
+      await expect(provider.getMpInfo(account, url)).rejects.toMatchObject({
+        kind: 'bad_request',
+      });
+      expect(publicGet).not.toHaveBeenCalled();
+    },
+  );
 
   it('explains that the public account must be followed in WeRead', async () => {
     const account = { id: 'local:1', provider: 'local' } as Account;
