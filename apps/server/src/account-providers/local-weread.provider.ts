@@ -26,6 +26,7 @@ import {
 } from './weread-session';
 import {
   ArticleListPayload,
+  extractWeChatArticlePageMetadata,
   mapMpCoverArticle,
   parseMpArticleGroups,
 } from './weread-articles';
@@ -231,13 +232,10 @@ export class LocalWeReadProvider implements AccountProvider {
       } catch (retryError) {
         const retryProviderError = this.asProviderError(retryError);
         if (retryProviderError.providerCode === -2041) {
-          if (page === 1) {
-            this.logger.warn(
-              `公众号 ${mpId} 的完整列表接口仍要求 WPA，降级获取最新文章`,
-            );
-            return this.getLatestArticle(account.id, session, mpId);
-          }
-          return [];
+          this.logger.warn(
+            `公众号 ${mpId} 的完整列表接口仍要求 WPA，降级获取最新文章`,
+          );
+          return this.getLatestArticle(account.id, session, mpId);
         }
         throw retryProviderError;
       }
@@ -710,8 +708,34 @@ export class LocalWeReadProvider implements AccountProvider {
     const body = this.unwrapData(response.data);
     const code = Number(body?.errCode ?? body?.errcode ?? 0);
     if (code !== 0) throw this.responseError(body, '获取公众号最新文章失败');
-    const article = mapMpCoverArticle(body, mpId);
+    let article = mapMpCoverArticle(body, mpId);
     if (!article) return [];
+
+    if (article.publishTimeEstimated) {
+      const articleUrl = `https://mp.weixin.qq.com/s/${encodeURIComponent(article.id)}`;
+      try {
+        const page = await this.fetchWeChatArticlePage(articleUrl);
+        const metadata = extractWeChatArticlePageMetadata(
+          String(page.data || ''),
+          page.config.url || articleUrl,
+        );
+        article = {
+          ...article,
+          id: metadata.id || article.id,
+          publishTime: metadata.publishTime || Math.floor(Date.now() / 1000),
+          publishTimeEstimated: !metadata.publishTime,
+        };
+      } catch (error) {
+        this.logger.warn(
+          `公众号 ${mpId} 的最新文章发布时间读取失败，将标记为待确认：${this.asProviderError(error).message}`,
+        );
+        article = {
+          ...article,
+          publishTime: Math.floor(Date.now() / 1000),
+          publishTimeEstimated: true,
+        };
+      }
+    }
 
     if (JSON.stringify(session) !== JSON.stringify(initialSession)) {
       await this.saveSession(accountId, session);

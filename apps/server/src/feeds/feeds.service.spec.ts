@@ -39,8 +39,9 @@ describe('FeedsService', () => {
       id: 'Blu~n3lkMnH56xVQEdd7LQ',
       mpId: 'MP_WXS_1',
       title: '测试文章',
-      picUrl: '',
+      picUrl: 'https://example.test/cover.jpg',
       publishTime: 1_780_000_000,
+      publishTimeEstimated: false,
       createdAt: new Date(),
       updatedAt: new Date(),
     };
@@ -68,5 +69,40 @@ describe('FeedsService', () => {
     expect(feed.items).toHaveLength(1);
     expect(atom).toContain('Blu_n3lkMnH56xVQEdd7LQ');
     expect(atom).not.toContain('Blu~n3lkMnH56xVQEdd7LQ');
+  });
+
+  it('preserves a legal tilde when there is no proven underscore alias', async () => {
+    const article = {
+      id: 'legal~article-token',
+      mpId: 'MP_WXS_1',
+      title: '合法波浪号链接',
+      picUrl: 'cover',
+      publishTime: 1_780_000_000,
+      publishTimeEstimated: false,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    };
+
+    const feed = await service.renderFeed({
+      type: 'atom',
+      feedInfo: {
+        id: 'MP_WXS_1',
+        mpName: '测试公众号',
+        mpCover: '',
+        mpIntro: '',
+        status: 1,
+        syncTime: 0,
+        updateTime: 1_780_000_000,
+        hasHistory: 1,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      },
+      articles: [article],
+      mode: 'summary',
+    });
+    const atom = feed.atom1();
+
+    expect(atom).toContain('legal~article-token');
+    expect(atom).not.toContain('legal_article-token');
   });
 });

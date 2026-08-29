@@ -14,6 +14,7 @@ describe('TrpcService account provider routing', () => {
   const localProvider = {
     getMpInfo: jest.fn(),
     listMps: jest.fn(),
+    getMpArticles: jest.fn(),
   };
   const prisma = {
     account: {
@@ -24,6 +25,17 @@ describe('TrpcService account provider routing', () => {
       upsert: jest.fn(),
       update: jest.fn(),
     },
+    article: {
+      findMany: jest.fn().mockResolvedValue([]),
+      upsert: jest.fn().mockResolvedValue({}),
+      deleteMany: jest.fn().mockResolvedValue({ count: 0 }),
+    },
+    feed: {
+      update: jest.fn().mockResolvedValue({}),
+    },
+    $transaction: jest.fn(async (operations: Array<Promise<unknown>>) =>
+      Promise.all(operations),
+    ),
   };
   const config = {
     get: jest.fn().mockReturnValue({ updateDelayTime: 60 }),
@@ -58,6 +70,8 @@ describe('TrpcService account provider routing', () => {
       lastError: null,
     });
     registry.get.mockReturnValue(localProvider);
+    prisma.article.findMany.mockResolvedValue([]);
+    prisma.feed.update.mockResolvedValue({});
     service = new TrpcService(
       prisma as unknown as PrismaService,
       config as unknown as ConfigService,
@@ -105,6 +119,64 @@ describe('TrpcService account provider routing', () => {
     expect(service.getAccountProviderInfo()).toEqual({
       type: accountProviderTypes.LOCAL,
       canListMps: true,
+    });
+  });
+
+  it('keeps the history entry and estimated-time marker for cover fallback', async () => {
+    localProvider.getMpArticles.mockResolvedValue([
+      {
+        id: 'latest',
+        title: '最新文章',
+        picUrl: 'cover',
+        publishTime: 1_787_900_000,
+        publishTimeEstimated: true,
+        source: 'cover',
+      },
+    ]);
+
+    await expect(
+      service.refreshMpArticlesAndUpdateFeed('MP_WXS_1'),
+    ).resolves.toEqual({ hasHistory: 1, historyUnavailable: true });
+    expect(prisma.feed.update).toHaveBeenCalledWith({
+      where: { id: 'MP_WXS_1' },
+      data: { syncTime: expect.any(Number), hasHistory: 1 },
+    });
+    expect(prisma.article.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        create: expect.objectContaining({ publishTimeEstimated: true }),
+      }),
+    );
+  });
+
+  it('does not hide history during an ordinary short list refresh', async () => {
+    localProvider.getMpArticles.mockResolvedValue([
+      {
+        id: 'article',
+        title: '文章',
+        picUrl: 'cover',
+        publishTime: 1_787_900_000,
+        source: 'list',
+      },
+    ]);
+
+    await service.refreshMpArticlesAndUpdateFeed('MP_WXS_1');
+
+    expect(prisma.feed.update).toHaveBeenCalledWith({
+      where: { id: 'MP_WXS_1' },
+      data: { syncTime: expect.any(Number) },
+    });
+  });
+
+  it('marks history complete only for an explicit history page', async () => {
+    localProvider.getMpArticles.mockResolvedValue([]);
+
+    await service.refreshMpArticlesAndUpdateFeed('MP_WXS_1', 2, {
+      updateHistoryState: true,
+    });
+
+    expect(prisma.feed.update).toHaveBeenCalledWith({
+      where: { id: 'MP_WXS_1' },
+      data: { syncTime: expect.any(Number), hasHistory: 0 },
     });
   });
 

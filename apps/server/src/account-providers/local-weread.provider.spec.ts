@@ -87,6 +87,44 @@ describe('LocalWeReadProvider', () => {
     );
   });
 
+  it('enriches a cover article with its canonical id and real publish time', async () => {
+    jest.spyOn((provider as any).request, 'get').mockResolvedValue({
+      status: 200,
+      data: {
+        reviewId: 'MP_WXS_1_alias-token',
+        title: '最新文章',
+        pic: 'cover',
+      },
+      headers: {},
+    });
+    jest.spyOn((provider as any).publicRequest, 'get').mockResolvedValue({
+      status: 200,
+      data: `
+        <meta property="og:url" content="https://mp.weixin.qq.com/s/canonical_token">
+        <script>var publish_time = "1787932800";</script>
+      `,
+      headers: {},
+      config: { url: 'https://mp.weixin.qq.com/s/alias-token' },
+    });
+
+    await expect(
+      (provider as any).getLatestArticle(
+        'local:1',
+        { cookies: { wr_skey: 'live' } },
+        'MP_WXS_1',
+      ),
+    ).resolves.toEqual([
+      {
+        id: 'canonical_token',
+        title: '最新文章',
+        picUrl: 'cover',
+        publishTime: 1_787_932_800,
+        publishTimeEstimated: false,
+        source: 'cover',
+      },
+    ]);
+  });
+
   it('keeps using a live session when proactive renewal temporarily fails', async () => {
     const account = {
       id: 'local:1',

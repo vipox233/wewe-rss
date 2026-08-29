@@ -331,6 +331,9 @@ export class TrpcRouter {
             {
               publishTime: 'desc',
             },
+            {
+              id: 'desc',
+            },
           ],
           take: limit + 1,
           where: mpId ? { mpId } : undefined,

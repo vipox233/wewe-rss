@@ -1,4 +1,4 @@
-import { FC, useMemo } from 'react';
+import { FC, useCallback, useMemo, useState } from 'react';
 import {
   Table,
   TableHeader,
@@ -15,10 +15,68 @@ import { trpc } from '@web/utils/trpc';
 import dayjs from 'dayjs';
 import { useParams } from 'react-router-dom';
 
+const readStorageKey = 'wewe-rss:read-articles:v1';
+
+type ArticleListItem = {
+  id: string;
+  mpId: string;
+  title: string;
+  picUrl: string;
+  publishTime: number;
+  publishTimeEstimated?: boolean;
+};
+
+function articleIdentityKey(item: ArticleListItem) {
+  const id = String(item.id || '').trim();
+  const normalizedTitle = String(item.title || '')
+    .replace(/\s+/g, ' ')
+    .trim();
+  const picUrl = String(item.picUrl || '').trim();
+  return picUrl
+    ? `content:${item.mpId}:${id.replace(/~/g, '_')}:${normalizedTitle}:${picUrl}`
+    : `id:${item.mpId}:${id}`;
+}
+
+function articleReadKeys(item: ArticleListItem) {
+  const normalizedTitle = String(item.title || '')
+    .replace(/\s+/g, ' ')
+    .trim();
+  const picUrl = String(item.picUrl || '').trim();
+  return [
+    articleIdentityKey(item),
+    ...(normalizedTitle && picUrl
+      ? [`content:${item.mpId}:${normalizedTitle}:${picUrl}`]
+      : []),
+  ];
+}
+
+function dedupeArticles(items: ArticleListItem[]) {
+  const seen = new Set<string>();
+  return items.filter((item) => {
+    const key = articleIdentityKey(item);
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
 const ArticleList: FC = () => {
   const { id } = useParams();
 
   const mpId = id || '';
+  const [readKeys, setReadKeys] = useState<Set<string>>(() => {
+    if (typeof window === 'undefined') return new Set();
+    try {
+      const stored = JSON.parse(localStorage.getItem(readStorageKey) || '[]');
+      return new Set<string>(
+        Array.isArray(stored)
+          ? stored.filter((value): value is string => typeof value === 'string')
+          : [],
+      );
+    } catch {
+      return new Set();
+    }
+  });
 
   const { data, fetchNextPage, isLoading, hasNextPage } =
     trpc.article.list.useInfiniteQuery(
@@ -33,11 +91,23 @@ const ArticleList: FC = () => {
 
   const items = useMemo(() => {
     const items = data
-      ? data.pages.reduce((acc, page) => [...acc, ...page.items], [] as any[])
+      ? data.pages.reduce(
+          (acc, page) => [...acc, ...page.items],
+          [] as ArticleListItem[],
+        )
       : [];
 
-    return items;
+    return dedupeArticles(items);
   }, [data]);
+
+  const markRead = useCallback((item: ArticleListItem) => {
+    setReadKeys((current) => {
+      const next = new Set(current);
+      articleReadKeys(item).forEach((key) => next.add(key));
+      localStorage.setItem(readStorageKey, JSON.stringify([...next]));
+      return next;
+    });
+  }, []);
 
   return (
     <div>
@@ -82,7 +152,9 @@ const ArticleList: FC = () => {
                 let value = getKeyValue(item, columnKey);
 
                 if (columnKey === 'publishTime') {
-                  value = dayjs(value * 1e3).format('YYYY-MM-DD HH:mm:ss');
+                  value = item.publishTimeEstimated
+                    ? '待确认'
+                    : dayjs(value * 1e3).format('YYYY-MM-DD HH:mm:ss');
                   return <TableCell>{value}</TableCell>;
                 }
 
@@ -90,12 +162,17 @@ const ArticleList: FC = () => {
                   return (
                     <TableCell>
                       <Link
-                        className="visited:text-neutral-400"
+                        className={
+                          articleReadKeys(item).some((key) => readKeys.has(key))
+                            ? 'text-neutral-400'
+                            : 'visited:text-neutral-400'
+                        }
                         isBlock
                         showAnchorIcon
                         color="foreground"
                         target="_blank"
                         href={`https://mp.weixin.qq.com/s/${item.id}`}
+                        onClick={() => markRead(item)}
                       >
                         {value}
                       </Link>

@@ -187,10 +187,7 @@ export class FeedsService {
 
     const uniqueArticles = [
       ...new Map(
-        articles.map((article) => [
-          normalizeWeChatArticleId(article.id),
-          article,
-        ]),
+        articles.map((article) => [articleDedupKey(article), article]),
       ).values(),
     ];
     await pMap(uniqueArticles, mapper, {
@@ -316,4 +313,13 @@ export class FeedsService {
       await new Promise((resolve) => setTimeout(resolve, 30 * 1e3));
     }
   }
+}
+
+function articleDedupKey(article: Pick<Article, 'id' | 'title' | 'picUrl'>) {
+  const legacyAlias = article.id.replace(/~/g, '_');
+  const title = article.title.replace(/\s+/g, ' ').trim();
+  const picUrl = article.picUrl.trim();
+  return picUrl
+    ? `${legacyAlias}\u0000${title}\u0000${picUrl}`
+    : normalizeWeChatArticleId(article.id);
 }

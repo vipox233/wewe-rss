@@ -61,11 +61,13 @@ model Feed {
 }
 
 model Article {
-  id          String @id
-  mpId        String @map("mp_id")
-  title       String @map("title")
-  picUrl      String @map("pic_url")
-  publishTime Int    @map("publish_time")
+  id                   String  @id
+  mpId                 String  @map("mp_id")
+  title                String  @map("title")
+  picUrl               String  @map("pic_url")
+  publishTime          Int     @map("publish_time")
+  // true 表示上游未返回真实发布时间，当前值仅用于列表排序
+  publishTimeEstimated Boolean @default(false) @map("publish_time_estimated")
 
   createdAt DateTime  @default(now()) @map("created_at")
   updatedAt DateTime? @default(now()) @updatedAt @map("updated_at")

@@ -52,17 +52,15 @@ export function articleIdFromReviewId(
   bookId: string,
 ): string {
   const prefix = `${bookId}_`;
-  if (reviewId.startsWith(prefix))
-    return normalizeWeChatArticleId(reviewId.slice(prefix.length));
+  if (reviewId.startsWith(prefix)) return reviewId.slice(prefix.length).trim();
   const separator = reviewId.lastIndexOf('_');
-  return normalizeWeChatArticleId(
-    separator >= 0 ? reviewId.slice(separator + 1) : reviewId,
-  );
+  return (separator >= 0 ? reviewId.slice(separator + 1) : reviewId).trim();
 }
 
 export function normalizeWeChatArticleId(articleId: string): string {
-  // 微信读书会在 reviewId 中使用 ~ 转义微信文章 originalId 里的 _。
-  return articleId.replace(/~/g, '_');
+  // `~` 既可能出现在 WeRead 的旧别名里，也可能是合法短链字符。
+  // 是否属于旧别名必须结合规范文章页与文章元数据判断，不能全局替换。
+  return articleId.trim();
 }
 
 export function parseWeChatArticleShareUrl(value: string): URL | null {

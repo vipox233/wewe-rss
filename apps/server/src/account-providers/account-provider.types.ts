@@ -13,6 +13,10 @@ export type MpArticle = {
   title: string;
   picUrl: string;
   publishTime: number;
+  /** cover 接口不一定返回发布时间，此时只把抓取时间用于排序。 */
+  publishTimeEstimated?: boolean;
+  /** list 是完整列表，cover 只代表最新一篇，不能据此判断历史已取完。 */
+  source?: 'list' | 'cover';
 };
 
 export type MpInfo = {
